@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Dict, List, Optional
 
 from core.exceptions import LLMResponseError, NetworkError
@@ -79,7 +80,18 @@ class SuspectAgent:
                 messages=messages,
                 response_format={"type": "json_object"},
             )
-            parsed = json.loads(raw)
+            if not raw:
+                raise LLMResponseError("LLM 返回空内容")
+            # Strip markdown code fences if present
+            text = raw.strip()
+            # Strip <think>...</think> blocks (reasoning model output like MiniMax-M2.7)
+            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            parsed = json.loads(text)
             result["reply"] = str(parsed.get("reply", ""))
             result["pressure_change"] = int(parsed.get("pressure_change", 0))
             result["secret_triggered"] = parsed.get("secret_triggered")

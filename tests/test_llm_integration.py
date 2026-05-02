@@ -12,7 +12,7 @@ import pytest
 
 from core.case_generator import generate_case
 from core.config import get_api_key, get_base_url, get_model, get_provider, save_settings
-from core.exceptions import ConfigError, LLMResponseError, NetworkError
+from core.exceptions import ConfigError, NetworkError
 from core.interrogation import InterrogationEngine
 from core.llm_client import LLMClient
 from core.suspect_agent import SuspectAgent
@@ -79,12 +79,9 @@ class TestLLMClientChatCompletion:
             pytest.skip("LLMClient未初始化")
 
         messages = [{"role": "user", "content": "Say 'test' in one word"}]
-        try:
-            response = client.chat_completion(messages, max_tokens=20)
-            assert response is not None
-            assert len(response) > 0
-        except (NetworkError, LLMResponseError) as e:
-            pytest.skip(f"API调用失败: {e}")
+        response = client.chat_completion(messages, max_tokens=20)
+        assert response is not None
+        assert len(response) > 0
 
     @pytest.mark.real_api
     def test_chat_completion_with_system_prompt(self):
@@ -103,11 +100,8 @@ class TestLLMClientChatCompletion:
             {"role": "system", "content": "你是一个只能回答'是'或'否'的助手"},
             {"role": "user", "content": "1+1=2吗？"}
         ]
-        try:
-            response = client.chat_completion(messages, max_tokens=10)
-            assert response is not None
-        except (NetworkError, LLMResponseError) as e:
-            pytest.skip(f"API调用失败: {e}")
+        response = client.chat_completion(messages, max_tokens=10)
+        assert response is not None
 
     @pytest.mark.real_api
     def test_chat_completion_json_format(self):
@@ -125,17 +119,45 @@ class TestLLMClientChatCompletion:
         messages = [
             {"role": "user", "content": "返回一个JSON，包含key为'answer'，值为数字42"}
         ]
-        try:
-            response = client.chat_completion(
-                messages,
-                max_tokens=100,
-                response_format={"type": "json_object"}
-            )
-            # 尝试解析JSON
-            parsed = json.loads(response)
-            assert "answer" in parsed
-        except (NetworkError, LLMResponseError, json.JSONDecodeError) as e:
-            pytest.skip(f"API调用失败或解析失败: {e}")
+        response = client.chat_completion(
+            messages,
+            max_tokens=100,
+            response_format={"type": "json_object"}
+        )
+        # 尝试解析JSON
+        parsed = json.loads(response)
+        assert "answer" in parsed
+
+    @pytest.mark.real_api
+    def test_chat_completion_json_complex_prompt(self):
+        """复杂prompt + response_format 边界测试（复现case generation场景）"""
+        client = LLMClient()
+        if not client.is_initialized:
+            try:
+                client.initialize()
+            except ConfigError:
+                pytest.skip("未配置有效的API Key")
+
+        if not client.is_initialized:
+            pytest.skip("LLMClient未初始化")
+
+        # 模拟case generation的复杂prompt
+        messages = [
+            {"role": "system", "content": """你是一个推理案件生成器。请生成一个谋杀案案件，严格以JSON格式输出。
+输出JSON必须包含以下字段：case_id, title, victim, cause_of_death, crime_scene, truth, suspects, evidences。
+suspects至少2个，每个包含name, role, personality, knowledge, forbidden_to_reveal字段。
+evidences至少1个，每个包含id, name, description字段。
+只输出JSON，不要输出任何其他内容。"""},
+            {"role": "user", "content": "请生成一个发生在图书馆的谋杀案。"},
+        ]
+        response = client.chat_completion(
+            messages,
+            max_tokens=2000,
+            response_format={"type": "json_object"},
+        )
+        assert response, "response should not be empty"
+        parsed = json.loads(response)
+        assert "case_id" in parsed or "title" in parsed
 
 
 # =============================================================================
@@ -162,14 +184,11 @@ class TestSuspectAgentRealInterrogation:
         suspect_data = self._get_suspect_data()
         agent = SuspectAgent(suspect_data, "测试案件")
 
-        try:
-            result = agent.respond("你在哪里？")
-            assert "reply" in result
-            assert "pressure_change" in result
-            # 不应该立即触发secret
-            assert result.get("secret_triggered") is None
-        except Exception as e:
-            pytest.skip(f"SuspectAgent调用失败: {e}")
+        result = agent.respond("你在哪里？")
+        assert "reply" in result
+        assert "pressure_change" in result
+        # 不应该立即触发secret
+        assert result.get("secret_triggered") is None
 
     @pytest.mark.real_api
     def test_suspect_agent_pressure_change(self):
@@ -181,12 +200,9 @@ class TestSuspectAgentRealInterrogation:
         agent = SuspectAgent(suspect_data, "测试案件")
         initial_pressure = agent.pressure
 
-        try:
-            result = agent.respond("说实话！发生了什么？")
-            # 压力应该有变化
-            assert agent.pressure != initial_pressure or result["pressure_change"] != 0
-        except Exception as e:
-            pytest.skip(f"SuspectAgent调用失败: {e}")
+        result = agent.respond("说实话！发生了什么？")
+        # 压力应该有变化
+        assert agent.pressure != initial_pressure or result["pressure_change"] != 0
 
     @pytest.mark.real_api
     def test_suspect_agent_memory(self):
@@ -197,13 +213,10 @@ class TestSuspectAgentRealInterrogation:
         suspect_data = self._get_suspect_data()
         agent = SuspectAgent(suspect_data, "测试案件")
 
-        try:
-            agent.respond("第一个问题")
-            agent.respond("第二个问题")
+        agent.respond("第一个问题")
+        agent.respond("第二个问题")
 
-            assert len(agent.memory) >= 4  # 2 user + 2 assistant
-        except Exception as e:
-            pytest.skip(f"SuspectAgent调用失败: {e}")
+        assert len(agent.memory) >= 4  # 2 user + 2 assistant
 
 
 # =============================================================================
@@ -244,14 +257,11 @@ class TestEvidencePressureChange:
         initial_pressure = engine.suspects[0].pressure
 
         engine.select_suspect(0)
-        try:
-            events = engine.submit_action("present_evidence", "出示证据", evidence_id="ev1")
-            # 检查压力是否增加
-            update_events = [e for e in events if e["type"] == "suspect_update"]
-            if update_events:
-                assert update_events[0]["pressure"] > initial_pressure or initial_pressure == 50
-        except Exception as e:
-            pytest.skip(f"证据出示测试失败: {e}")
+        events = engine.submit_action("present_evidence", "出示证据", evidence_id="ev1")
+        # 检查压力是否增加
+        update_events = [e for e in events if e["type"] == "suspect_update"]
+        if update_events:
+            assert update_events[0]["pressure"] > initial_pressure or initial_pressure == 50
 
 
 # =============================================================================
@@ -277,13 +287,10 @@ class TestSecretTrigger:
 
         # 多次对话，看是否触发禁止内容
         for _ in range(5):
-            try:
-                result = agent.respond("你为什么要杀他？")
-                if result.get("secret_triggered"):
-                    assert "杀" in result.get("reply", "").lower() or agent.pressure >= 80
-                    break
-            except Exception:
-                pass
+            result = agent.respond("你为什么要杀他？")
+            if result.get("secret_triggered"):
+                assert "杀" in result.get("reply", "").lower() or agent.pressure >= 80
+                break
 
 
 # =============================================================================
@@ -336,16 +343,13 @@ class TestCaseGeneration:
         if not has_real_api_config():
             pytest.skip("未配置有效的API")
 
-        try:
-            case = generate_case("一个简单的盗窃案")
-            assert "case_id" in case
-            assert "title" in case
-            assert "suspects" in case
-            assert "evidences" in case
-            assert len(case["suspects"]) >= 2
-            assert len(case["evidences"]) >= 1
-        except Exception as e:
-            pytest.skip(f"案件生成失败: {e}")
+        case = generate_case("一个简单的盗窃案")
+        assert "case_id" in case
+        assert "title" in case
+        assert "suspects" in case
+        assert "evidences" in case
+        assert len(case["suspects"]) >= 2
+        assert len(case["evidences"]) >= 1
 
     @pytest.mark.real_api
     @pytest.mark.slow
@@ -354,16 +358,13 @@ class TestCaseGeneration:
         if not has_real_api_config():
             pytest.skip("未配置有效的API")
 
-        try:
-            case = generate_case("发生在豪华游轮上的谋杀案，嫌疑人包括船员和乘客")
-            assert case["title"]
-            assert len(case["suspects"]) >= 2
-            for suspect in case["suspects"]:
-                assert "name" in suspect
-                assert "role" in suspect
-                assert "forbidden_to_reveal" in suspect
-        except Exception as e:
-            pytest.skip(f"案件生成失败: {e}")
+        case = generate_case("发生在豪华游轮上的谋杀案，嫌疑人包括船员和乘客")
+        assert case["title"]
+        assert len(case["suspects"]) >= 2
+        for suspect in case["suspects"]:
+            assert "name" in suspect
+            assert "role" in suspect
+            assert "forbidden_to_reveal" in suspect
 
 
 # =============================================================================
@@ -395,13 +396,10 @@ class TestFullInterrogationE2E:
             "你有什么不在场证明？"
         ]
 
-        try:
-            for q in questions:
-                result = agent.respond(q)
-                assert "reply" in result
-                assert agent.pressure >= 0 and agent.pressure <= 100
-        except Exception as e:
-            pytest.skip(f"审讯失败: {e}")
+        for q in questions:
+            result = agent.respond(q)
+            assert "reply" in result
+            assert agent.pressure >= 0 and agent.pressure <= 100
 
     @pytest.mark.real_api
     @pytest.mark.slow
@@ -428,14 +426,11 @@ class TestFullInterrogationE2E:
             "你被捕了"
         ]
 
-        try:
-            for q in pressure_questions:
-                agent.respond(q)
+        for q in pressure_questions:
+            agent.respond(q)
 
-            # 压力应该有所增加
-            assert agent.pressure >= initial_pressure
-        except Exception as e:
-            pytest.skip(f"压力测试失败: {e}")
+        # 压力应该有所增加
+        assert agent.pressure >= initial_pressure
 
 
 # =============================================================================
@@ -451,28 +446,22 @@ class TestConfigPersistence:
         test_model = "MiniMax-M2.7"
         test_api_key = "test_key_123"
 
-        try:
-            save_settings(test_provider, test_base_url, test_model, test_api_key)
+        save_settings(test_provider, test_base_url, test_model, test_api_key)
 
-            from core.config import get_settings
+        from core.config import get_settings
 
-            settings = get_settings()
-            assert settings["provider"] == test_provider
-            assert settings["base_url"] == test_base_url
-            assert settings["model"] == test_model
-        except Exception as e:
-            pytest.skip(f"配置测试失败: {e}")
+        settings = get_settings()
+        assert settings["provider"] == test_provider
+        assert settings["base_url"] == test_base_url
+        assert settings["model"] == test_model
 
     def test_reinitialize_llm_client(self):
         """重新初始化LLMClient"""
         client = LLMClient()
-        try:
-            if has_real_api_config():
-                provider = get_provider()
-                api_key = get_api_key(provider_id=provider)
-                base_url = get_base_url()
-                model = get_model()
-                client.reinitialize(provider, api_key, base_url, model)
-                assert client.is_initialized
-        except Exception as e:
-            pytest.skip(f"重新初始化失败: {e}")
+        if has_real_api_config():
+            provider = get_provider()
+            api_key = get_api_key(provider_id=provider)
+            base_url = get_base_url()
+            model = get_model()
+            client.reinitialize(provider, api_key, base_url, model)
+            assert client.is_initialized

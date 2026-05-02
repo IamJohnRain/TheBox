@@ -1,9 +1,11 @@
 """Tests for core.case_generator.generate_case handling of LLM failures.
 
-Covers three scenarios:
+Covers scenarios:
 1. LLM returns a non-JSON string — generator retries and eventually raises ValidationError.
 2. LLM returns valid JSON that fails schema validation — generator retries.
 3. LLM returns valid JSON on the second attempt — generator succeeds.
+4. LLM returns empty string or None.
+5. LLM (reasoning model) returns <think>...</think> + JSON — generator strips think block.
 """
 
 import json
@@ -12,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.case_generator import generate_case
-from core.exceptions import ValidationError
+from core.exceptions import LLMResponseError, ValidationError
 
 
 # ---------------------------------------------------------------------------
@@ -183,3 +185,105 @@ class TestGenerateCaseSucceedsOnSecondAttempt:
 
         generate_case("测试背景", max_retries=1)
         assert mock_instance.chat_completion.call_count == 2
+
+
+class TestGenerateCaseEmptyResponse:
+    """Scenario 4: LLM returns empty string or None."""
+
+    @patch("core.case_generator.LLMClient")
+    def test_empty_string_raises_validation_error(self, MockLLMClient):
+        """When the LLM returns an empty string, generate_case should
+        exhaust its retries and raise a ValidationError."""
+        mock_instance = _make_mock_llm_client("")
+        MockLLMClient.return_value = mock_instance
+
+        with pytest.raises(ValidationError, match="案件生成失败"):
+            generate_case("测试背景", max_retries=1)
+
+    @patch("core.case_generator.LLMClient")
+    def test_empty_string_retries_correctly(self, MockLLMClient):
+        """generate_case should retry (max_retries + 1) times when LLM returns empty."""
+        max_retries = 2
+        mock_instance = _make_mock_llm_client("")
+        MockLLMClient.return_value = mock_instance
+
+        with pytest.raises(ValidationError):
+            generate_case("测试背景", max_retries=max_retries)
+
+        expected_calls = max_retries + 1
+        assert mock_instance.chat_completion.call_count == expected_calls
+
+    @patch("core.case_generator.LLMClient")
+    def test_none_content_raises_validation_error(self, MockLLMClient):
+        """When chat_completion raises LLMResponseError for None content,
+        generate_case should retry and raise ValidationError."""
+        mock_client = MagicMock()
+        mock_client.is_initialized = True
+        mock_client.chat_completion.side_effect = LLMResponseError("LLM 返回空内容")
+        MockLLMClient.return_value = mock_client
+
+        with pytest.raises(ValidationError, match="案件生成失败"):
+            generate_case("测试背景", max_retries=1)
+
+    @patch("core.case_generator.LLMClient")
+    def test_empty_then_valid_succeeds(self, MockLLMClient):
+        """When first attempt returns empty and second returns valid JSON,
+        generate_case should succeed."""
+        mock_instance = _make_sequential_mock_llm_client(
+            ["", json.dumps(VALID_CASE_DICT, ensure_ascii=False)]
+        )
+        MockLLMClient.return_value = mock_instance
+
+        result = generate_case("测试背景", max_retries=1)
+        assert isinstance(result, dict)
+        assert result["case_id"] == "gen_test_001"
+
+
+class TestGenerateCaseThinkBlock:
+    """Scenario 5: LLM (reasoning model) returns <think>...</think> + JSON.
+
+    MiniMax-M2.7 and other reasoning models prepend a <think>...</think>
+    reasoning block before the actual JSON content.  generate_case must
+    strip this block before attempting JSON parsing.
+    """
+
+    @patch("core.case_generator.LLMClient")
+    def test_think_block_plus_plain_json(self, MockLLMClient):
+        """When LLM returns <think>...</think> + plain JSON, generate_case
+        should strip the think block and parse correctly."""
+        think = "用户要求生成一个谋杀案...推理过程...让我来设计案件..."
+        valid_json = json.dumps(VALID_CASE_DICT, ensure_ascii=False)
+        response = f"<think>{think}</think>\n\n{valid_json}"
+        mock_instance = _make_mock_llm_client(response)
+        MockLLMClient.return_value = mock_instance
+
+        result = generate_case("测试背景", max_retries=0)
+        assert isinstance(result, dict)
+        assert result["case_id"] == "gen_test_001"
+        assert result["title"] == "测试案件"
+
+    @patch("core.case_generator.LLMClient")
+    def test_think_block_plus_code_fence_json(self, MockLLMClient):
+        """When LLM returns <think>...</think> + ```json ... ```, generate_case
+        should strip both the think block and the code fence, then parse correctly."""
+        think = "让我仔细想想这个案件的设计..."
+        valid_json = json.dumps(VALID_CASE_DICT, ensure_ascii=False)
+        response = f"<think>{think}</think>\n\n```json\n{valid_json}\n```"
+        mock_instance = _make_mock_llm_client(response)
+        MockLLMClient.return_value = mock_instance
+
+        result = generate_case("测试背景", max_retries=0)
+        assert isinstance(result, dict)
+        assert result["case_id"] == "gen_test_001"
+
+    @patch("core.case_generator.LLMClient")
+    def test_think_only_no_json_raises_validation_error(self, MockLLMClient):
+        """When LLM returns only <think>...</think> with no JSON content,
+        generate_case should retry and raise ValidationError."""
+        think = "我需要更长时间思考..."
+        response = f"<think>{think}</think>"
+        mock_instance = _make_mock_llm_client(response)
+        MockLLMClient.return_value = mock_instance
+
+        with pytest.raises(ValidationError, match="案件生成失败"):
+            generate_case("测试背景", max_retries=0)

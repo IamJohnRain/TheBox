@@ -201,3 +201,47 @@ class TestTruncateMemory:
         agent.truncate_memory(10)
         assert len(agent.memory) == 20
         assert agent.memory[0]["content"] == "u5"
+
+
+class TestSuspectAgentThinkBlock:
+    """SuspectAgent handling of <think>...</think> blocks from reasoning models."""
+
+    def _make_suspect_data(self):
+        return {
+            "name": "测试嫌疑人",
+            "role": "嫌疑人",
+            "personality": "紧张",
+            "knowledge": "我知道发生了什么",
+            "forbidden_to_reveal": ["杀", "死"],
+        }
+
+    @patch("core.suspect_agent.llm_client")
+    def test_respond_with_think_and_json(self, mock_llm):
+        """When LLM returns <think>...</think> + valid JSON, respond should parse correctly."""
+        mock_llm.is_initialized = True
+        mock_llm.chat_completion.return_value = (
+            '<think>The suspect is nervous...推理...</think>\n\n'
+            '{"reply": "我不知道你在说什么", "pressure_change": 1, "secret_triggered": null}'
+        )
+
+        agent = SuspectAgent(self._make_suspect_data(), "测试案件")
+        result = agent.respond("你在哪里？")
+
+        assert result["reply"] == "我不知道你在说什么"
+        assert result["pressure_change"] == 1
+        assert result.get("secret_triggered") is None
+
+    @patch("core.suspect_agent.llm_client")
+    def test_respond_with_think_only_fallback(self, mock_llm):
+        """When LLM returns only <think>...}} with no JSON, respond should fallback to silence."""
+        mock_llm.is_initialized = True
+        mock_llm.chat_completion.return_value = (
+            '<think>I need to think more about this...但我不确定...</think>'
+        )
+
+        agent = SuspectAgent(self._make_suspect_data(), "测试案件")
+        result = agent.respond("你在哪里？")
+
+        # Should fallback to silence (JSONDecodeError caught)
+        assert "沉默" in result["reply"] or result["reply"] == "（嫌疑人沉默不语）"
+        assert result["pressure_change"] == 0

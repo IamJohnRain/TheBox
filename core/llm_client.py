@@ -72,7 +72,7 @@ class LLMClient:
 
                 response = self.client.chat.completions.create(**kwargs)
                 content = response.choices[0].message.content
-                if content is None:
+                if not content:
                     raise LLMResponseError("LLM 返回 content 为 None")
                 return content
             except (openai.APITimeoutError, openai.APIConnectionError) as e:

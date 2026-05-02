@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 from typing import Dict
 
@@ -136,10 +137,19 @@ def generate_case(background: str, max_retries: int = 1) -> Dict:
                 messages=messages,
                 temperature=temperature,
                 max_tokens=2000,
-                response_format={"type": "json_object"},
             )
 
-            case_dict = json.loads(content)
+            # Strip markdown code fences if present (some models wrap JSON in ```json ... ```)
+            text = content.strip()
+            # Strip <think>...</think> blocks (reasoning model output like MiniMax-M2.7)
+            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+            if text.startswith("```"):
+                # Remove opening fence (with optional language tag)
+                text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+            case_dict = json.loads(text)
             case_dict["case_id"] = case_dict.get("case_id", str(uuid.uuid4()))
 
             jsonschema.validate(instance=case_dict, schema=CASE_SCHEMA)
