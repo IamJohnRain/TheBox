@@ -1,0 +1,17 @@
+{
+  "default": {
+    "reply": "我不知道你在说什么。",
+    "pressure_change": 0,
+    "secret_triggered": null
+  },
+  "pressure_high": {
+    "reply": "我...我真的不知道...别问了！",
+    "pressure_change": 5,
+    "secret_triggered": null
+  },
+  "leak": {
+    "reply": "好吧，当时我确实在现场...",
+    "pressure_change": 10,
+    "secret_triggered": "在现场"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "case_id": {"type": "string"},
+    "title": {"type": "string"},
+    "victim": {"type": "string"},
+    "cause_of_death": {"type": "string"},
+    "crime_scene": {"type": "string"},
+    "truth": {"type": "string"},
+    "suspects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "role": {"type": "string"},
+          "personality": {"type": "string"},
+          "knowledge": {"type": "string"},
+          "forbidden_to_reveal": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["name", "knowledge", "forbidden_to_reveal"]
+      }
+    },
+    "evidences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "related_suspect": {"type": "string"}
+        },
+        "required": ["id", "name", "description"]
+      }
+    },
+    "interrogation_time_limit_sec": {"type": "integer"}
+  },
+  "required": ["case_id", "title", "victim", "cause_of_death", "crime_scene", "truth", "suspects", "evidences", "interrogation_time_limit_sec"]
+}
