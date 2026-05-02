@@ -51,7 +51,10 @@ class AdminDialog(QDialog):
         model_layout.addWidget(model_label)
 
         self.model_input = QLineEdit()
-        self.model_input.setPlaceholderText("默认: gpt-4o-mini")
+        from core.config import get_model
+
+        default_model = get_model()
+        self.model_input.setPlaceholderText(f"默认: {default_model}")
         model_layout.addWidget(self.model_input)
 
         layout.addWidget(model_row)

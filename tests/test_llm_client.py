@@ -25,19 +25,24 @@ def test_not_initialized_by_default():
 
 
 @patch("core.llm_client.get_api_key", return_value="")
-def test_initialize_without_api_key(mock_get_key):
+@patch("core.llm_client.get_provider", return_value="minimax")
+def test_initialize_without_api_key(mock_provider, mock_get_key):
     client = LLMClient()
     client.initialize()
     assert not client.is_initialized
 
 
 @patch("core.llm_client.get_api_key", return_value="sk-test")
+@patch("core.llm_client.get_base_url", return_value="https://api.minimaxi.com/v1")
+@patch("core.llm_client.get_model", return_value="MiniMax-M2.7")
+@patch("core.llm_client.get_provider", return_value="minimax")
 @patch("core.llm_client.OpenAI")
-@patch("core.llm_client.get_model", return_value="gpt-4o-mini")
-def test_initialize_with_api_key(mock_model, mock_openai, mock_key):
+def test_initialize_with_api_key(mock_openai, mock_provider, mock_model, mock_url, mock_key):
     client = LLMClient()
     client.initialize()
     assert client.is_initialized
+    assert client.provider == "minimax"
+    assert client.base_url == "https://api.minimaxi.com/v1"
 
 
 def test_chat_completion_raises_when_not_initialized():
@@ -47,9 +52,11 @@ def test_chat_completion_raises_when_not_initialized():
 
 
 @patch("core.llm_client.get_api_key", return_value="sk-test")
-@patch("core.llm_client.OpenAI")
+@patch("core.llm_client.get_base_url", return_value="https://api.openai.com/v1")
 @patch("core.llm_client.get_model", return_value="gpt-4o-mini")
-def test_chat_completion_success(mock_model, mock_openai_cls, mock_key):
+@patch("core.llm_client.get_provider", return_value="openai")
+@patch("core.llm_client.OpenAI")
+def test_chat_completion_success(mock_openai_cls, mock_provider, mock_model, mock_url, mock_key):
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = "Hello back"

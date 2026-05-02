@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 import openai
 from openai import OpenAI
 
-from core.config import get_api_key, get_model
+from core.config import get_api_key, get_base_url, get_model, get_provider
 from core.exceptions import ConfigError, LLMResponseError, NetworkError
 
 logger = logging.getLogger("thebox")
@@ -20,20 +20,31 @@ class LLMClient:
             cls._instance._initialized = False
             cls._instance.client = None
             cls._instance.model = None
+            cls._instance.base_url = None
+            cls._instance.provider = None
             cls._instance.max_retries = 2
             cls._instance.retry_delay = 1.0
         return cls._instance
 
     def initialize(self):
-        api_key = get_api_key()
+        provider = get_provider()
+        api_key = get_api_key(provider_id=provider)
         if not api_key:
             logger.warning("未设置 API Key，LLMClient 未初始化，将使用离线模式")
             self._initialized = False
             return
-        self.client = OpenAI(api_key=api_key)
+        base_url = get_base_url()
+        try:
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+        except Exception as e:
+            logger.error(f"OpenAI 客户端初始化失败: {e}")
+            self._initialized = False
+            return
         self.model = get_model()
+        self.base_url = base_url
+        self.provider = provider
         self._initialized = True
-        logger.info(f"LLMClient 已初始化，模型: {self.model}")
+        logger.info(f"LLMClient 已初始化，Provider: {provider}, 模型: {self.model}")
 
     @property
     def is_initialized(self) -> bool:
@@ -82,6 +93,18 @@ class LLMClient:
         from core.config import set_model
 
         set_model(model_name)
+
+    def reinitialize(self, provider: str, api_key: str, base_url: str, model: str):
+        """Re-initialize the client with explicit settings (used by settings dialog)."""
+        from core.config import save_settings
+
+        save_settings(provider, base_url, model, api_key)
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.model = model
+        self.base_url = base_url
+        self.provider = provider
+        self._initialized = True
+        logger.info(f"LLMClient 已重新初始化，Provider: {provider}, 模型: {model}")
 
 
 llm_client = LLMClient()

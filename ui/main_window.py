@@ -22,6 +22,7 @@ from schemas.events import UIEvent
 from ui.admin_dialog import AdminDialog
 from ui.chat_widget import ChatWidget
 from ui.evidence_panel import EvidencePanel
+from ui.settings_dialog import SettingsDialog
 from ui.suspect_display import SuspectDisplay
 
 logger = logging.getLogger("thebox")
@@ -133,11 +134,29 @@ class MainWindow(QMainWindow):
         self._load_action = game_menu.addAction("读档")
         self._load_action.triggered.connect(self._on_load_game)
 
+        settings_menu = menu_bar.addMenu("设置")
+        llm_settings_action = settings_menu.addAction("LLM 设置")
+        llm_settings_action.triggered.connect(self._on_llm_settings)
+
         case_menu = menu_bar.addMenu("案件")
         generate_action = case_menu.addAction("生成新案件")
         generate_action.triggered.connect(self._on_generate_case)
         load_action = case_menu.addAction("加载预置案件")
         load_action.triggered.connect(self._on_load_case)
+
+    def _on_llm_settings(self) -> None:
+        """Open the LLM settings dialog."""
+        dialog = SettingsDialog(self)
+        dialog.settings_saved.connect(self._on_settings_saved)
+        dialog.exec()
+
+    def _on_settings_saved(self) -> None:
+        """Handle settings save - reinitialize engine LLM if active."""
+        if self.engine is not None and hasattr(self.engine, "suspect_agent"):
+            try:
+                self.engine.suspect_agent._ensure_llm_client()
+            except Exception as exc:
+                logger.warning(f"Engine reinit after settings change: {exc}")
 
     def _build_timer(self) -> None:
         """Initialize the countdown timer."""

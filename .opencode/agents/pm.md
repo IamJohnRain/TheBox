@@ -1,7 +1,6 @@
 ---
 description: 项目经理Agent，负责需求分解和任务调度，协调各Agent协作
 mode: primary
-model: xiaomi-token-plan-cn/MiMo-V2.5-Pro
 temperature: 0.3
 permission:
   edit: deny
