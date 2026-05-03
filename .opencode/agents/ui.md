@@ -5,9 +5,7 @@ model: minimax-cn-coding-plan/MiniMax-M2.7
 temperature: 0.3
 permission:
   edit: allow
-  bash:
-    "*": ask
-    "ls *": allow
+  bash: allow
   read: allow
   glob: allow
   grep: allow

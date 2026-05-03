@@ -4,9 +4,8 @@ mode: primary
 model: AstronCodingPlan/astron-code-latest
 temperature: 0.3
 permission:
-  edit: deny
-  bash:
-    "*": deny
+  edit: allow
+  bash: allow
   read: allow
   glob: allow
   grep: allow

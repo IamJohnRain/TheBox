@@ -1,0 +1,9 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/ui/web">
+        <file>ui/web/index.html</file>
+        <file>ui/web/css/style.css</file>
+        <file>ui/web/css/animations.css</file>
+        <file>ui/web/css/components.css</file>
+    </qresource>
+</RCC>

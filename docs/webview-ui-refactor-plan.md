@@ -190,20 +190,24 @@ def _start_worker(self, action, content, evidence_id=None):
 
 def _on_worker_timeout(self):
     if self._current_worker and self._current_worker.isRunning():
-        self._current_worker.terminate()
+        self._current_worker.interrupt()
+        self._current_worker.wait(2000)  # 等待最多2秒
         self._cleanup_after_worker()
         self.bridge.hide_loading.emit()
         self.bridge.add_message.emit("system", "响应超时，请重试", "")
         self.bridge.set_input_enabled.emit(True)
+        self._current_worker = None
 
 def _on_cancel_operation(self):
     """用户取消操作"""
     if self._current_worker and self._current_worker.isRunning():
-        self._current_worker.terminate()
+        self._current_worker.interrupt()
+        self._current_worker.wait(2000)  # 等待最多2秒
         self._cleanup_after_worker()
         self.bridge.hide_loading.emit()
         self.bridge.add_message.emit("system", "操作已取消", "")
         self.bridge.set_input_enabled.emit(True)
+        self._current_worker = None
 ```
 
 ### 3. 状态同步机制
@@ -226,11 +230,88 @@ def load_case(self, case_data):
         "evidences": case_data.get("evidences", []),
         "time_left": self.engine.time_left,
         "current_suspect_index": 0,
+        "state": self.engine.state,
+        "case_id": case_data.get("case_id", ""),
     }
     
     # 一次性发送完整状态
     self.bridge.init_game_state.emit(state)
     self.bridge.set_input_enabled.emit(True)
+```
+
+### 4. 游戏状态类型定义（确保前后端数据契约一致）
+
+**问题**：`init_game_state = Signal(dict)` 缺乏类型约束，字段名变更无法在编译时发现。
+
+**解决方案**：定义 TypedDict 作为数据契约
+
+```python
+# schemas/game_state.py
+from typing import List, Optional
+from typing_extensions import TypedDict
+
+class SuspectState(TypedDict):
+    name: str
+    pressure: int
+
+class GameStateDict(TypedDict):
+    suspects: List[SuspectState]
+    evidences: list
+    time_left: int
+    current_suspect_index: int
+    state: str
+    case_id: str
+```
+
+**使用方式**：
+```python
+# WebBridge 中
+init_game_state = Signal(dict)  # 实际传递 GameStateDict
+
+# WebMainWindow.load_case 中
+state: GameStateDict = {
+    "suspects": [{"name": s.name, "pressure": s.pressure} for s in self.engine.suspects],
+    "evidences": case_data.get("evidences", []),
+    "time_left": self.engine.time_left,
+    "current_suspect_index": 0,
+    "state": self.engine.state,
+    "case_id": case_data.get("case_id", ""),
+}
+```
+
+### 5. 启动画面（解决 WebEngine 初始化延迟）
+
+**问题**：QWebEngineView 首次初始化需要加载 Chromium，耗时 3-10 秒，用户会看到白屏。
+
+**解决方案**：使用 QSplashScreen 显示启动画面
+
+```python
+# main.py
+import sys
+from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt
+from core.db import init_db
+from ui.web_main_window import WebMainWindow
+
+def main():
+    init_db()
+    app = QApplication(sys.argv)
+    
+    # 显示启动画面
+    splash_pix = QPixmap("assets/splash.png")
+    splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+    splash.show()
+    app.processEvents()
+    
+    # 创建主窗口
+    window = WebMainWindow()
+    
+    # WebView 加载完成后隐藏启动画面
+    window.web_view.loadFinished.connect(lambda: splash.finish(window))
+    
+    window.show()
+    sys.exit(app.exec())
 ```
 
 ---
@@ -250,6 +331,7 @@ def load_case(self, case_data):
 - [ ] QWebChannel 通信基础测试通过
 - [ ] 资源路径辅助工具实现并测试通过
 - [ ] 所有现有测试不受影响
+- [ ] **PyInstaller 打包验证**：能打包并运行一个包含 QWebEngineView 的最小程序
 
 ### Agent 任务分解
 
@@ -364,8 +446,13 @@ def load_case(self, case_data):
        hide_loading = Signal()
        update_loading_progress = Signal(int)  # elapsed_seconds
        
-       # 存档列表（新增）
-       show_save_list = Signal(list)  # sessions
+        # 存档列表（新增）
+        show_save_list = Signal(list)  # sessions
+        
+        # 结局对话框（新增）
+        show_ending_dialog = Signal(str, str)  # title, message
+        restart_requested = Signal()
+        return_to_menu_requested = Signal()
        
        @Slot(str)
        def sendMessage(self, text: str):
@@ -1541,27 +1628,34 @@ def load_case(self, case_data):
    LLM_TIMEOUT_SECONDS = 60
    
    
-   class WebWorker(QThread):
-       """后台线程 Worker，处理可能阻塞的 LLM 调用"""
-       finished = Signal(list)
-       error = Signal(str)
-   
-       def __init__(self, engine, action, content, evidence_id=None):
-           super().__init__()
-           self._engine = engine
-           self._action = action
-           self._content = content
-           self._evidence_id = evidence_id
-   
-       def run(self):
-           try:
-               events = self._engine.submit_action(
-                   self._action, self._content, evidence_id=self._evidence_id
-               )
-               self.finished.emit(events)
-           except Exception as exc:
-               logger.error(f"Worker error: {exc}")
-               self.error.emit(str(exc))
+    class WebWorker(QThread):
+        """后台线程 Worker，处理可能阻塞的 LLM 调用"""
+        finished = Signal(list)
+        error = Signal(str)
+
+        def __init__(self, engine, action, content, evidence_id=None):
+            super().__init__()
+            self._engine = engine
+            self._action = action
+            self._content = content
+            self._evidence_id = evidence_id
+            self._interrupted = False
+
+        def interrupt(self):
+            """请求中断 Worker"""
+            self._interrupted = True
+
+        def run(self):
+            try:
+                events = self._engine.submit_action(
+                    self._action, self._content, evidence_id=self._evidence_id
+                )
+                if not self._interrupted:
+                    self.finished.emit(events)
+            except Exception as exc:
+                if not self._interrupted:
+                    logger.error(f"Worker error: {exc}")
+                    self.error.emit(str(exc))
    
    
    class WebMainWindow(QMainWindow):
@@ -1601,9 +1695,9 @@ def load_case(self, case_data):
            # 连接 Bridge 信号
            self._connect_bridge_signals()
    
-           # 如果有初始案件数据，加载
-           if case_data:
-               self.web_view.loadFinished.connect(lambda: self.load_case(case_data))
+            # 如果有初始案件数据，加载
+            if case_data:
+                self.web_view.loadFinished.connect(lambda ok: self.load_case(case_data) if ok else None)
    
        def _connect_bridge_signals(self):
            """连接 WebBridge 的所有信号"""
@@ -1619,17 +1713,19 @@ def load_case(self, case_data):
            self.bridge.cancel_requested.connect(self._on_cancel_operation)
            self.bridge.save_selected.connect(self._on_save_selected)
    
-       def load_case(self, case_data):
-           """加载案件到引擎并更新 UI"""
-           self.engine = InterrogationEngine(case_data)
-   
-           # 构建完整初始状态
-           state = {
-               "suspects": [{"name": s.name, "pressure": s.pressure} for s in self.engine.suspects],
-               "evidences": case_data.get("evidences", []),
-               "time_left": self.engine.time_left,
-               "current_suspect_index": 0,
-           }
+        def load_case(self, case_data):
+            """加载案件到引擎并更新 UI"""
+            self.engine = InterrogationEngine(case_data)
+    
+            # 构建完整初始状态
+            state = {
+                "suspects": [{"name": s.name, "pressure": s.pressure} for s in self.engine.suspects],
+                "evidences": case_data.get("evidences", []),
+                "time_left": self.engine.time_left,
+                "current_suspect_index": 0,
+                "state": self.engine.state,
+                "case_id": case_data.get("case_id", ""),
+            }
    
            # 一次性发送完整状态
            self.bridge.init_game_state.emit(state)
@@ -1734,25 +1830,27 @@ def load_case(self, case_data):
            self.bridge.set_input_enabled.emit(True)
            self._current_worker = None
    
-       def _on_worker_timeout(self):
-           """Worker 超时"""
-           if self._current_worker and self._current_worker.isRunning():
-               self._current_worker.terminate()
-               self._cleanup_after_worker()
-               self.bridge.hide_loading.emit()
-               self.bridge.add_message.emit("system", "响应超时，请重试", "")
-               self.bridge.set_input_enabled.emit(True)
-               self._current_worker = None
-   
-       def _on_cancel_operation(self):
-           """用户取消操作"""
-           if self._current_worker and self._current_worker.isRunning():
-               self._current_worker.terminate()
-               self._cleanup_after_worker()
-               self.bridge.hide_loading.emit()
-               self.bridge.add_message.emit("system", "操作已取消", "")
-               self.bridge.set_input_enabled.emit(True)
-               self._current_worker = None
+        def _on_worker_timeout(self):
+            """Worker 超时"""
+            if self._current_worker and self._current_worker.isRunning():
+                self._current_worker.interrupt()
+                self._current_worker.wait(2000)  # 等待最多2秒
+                self._cleanup_after_worker()
+                self.bridge.hide_loading.emit()
+                self.bridge.add_message.emit("system", "响应超时，请重试", "")
+                self.bridge.set_input_enabled.emit(True)
+                self._current_worker = None
+
+        def _on_cancel_operation(self):
+            """用户取消操作"""
+            if self._current_worker and self._current_worker.isRunning():
+                self._current_worker.interrupt()
+                self._current_worker.wait(2000)  # 等待最多2秒
+                self._cleanup_after_worker()
+                self.bridge.hide_loading.emit()
+                self.bridge.add_message.emit("system", "操作已取消", "")
+                self.bridge.set_input_enabled.emit(True)
+                self._current_worker = None
    
        def _cleanup_after_worker(self):
            """清理 Worker 相关资源"""
@@ -1799,21 +1897,35 @@ def load_case(self, case_data):
                elif event["type"] == "timer_tick":
                    self.bridge.update_timer.emit(event["time_left"])
    
-       def _handle_ending(self, state_event):
-           """处理游戏结局"""
-           self._countdown_timer.stop()
-           self.bridge.set_input_enabled.emit(False)
-   
-           new_state = state_event["new_state"]
-           if new_state == "breakdown":
-               message = "破案成功！真凶已经崩溃认罪。"
-           elif new_state == "verdict":
-               message = "时间耗尽！律师介入，案件被迫终止。"
-           else:
-               message = f"游戏结束: {new_state}"
-   
-           # 通过 Bridge 显示对话框
-           self.bridge.show_dialog.emit("审讯结束", message)
+        def _handle_ending(self, state_event):
+            """处理游戏结局"""
+            self._countdown_timer.stop()
+            self.bridge.set_input_enabled.emit(False)
+
+            new_state = state_event["new_state"]
+            if new_state == "breakdown":
+                message = "破案成功！真凶已经崩溃认罪。"
+            elif new_state == "verdict":
+                message = "时间耗尽！律师介入，案件被迫终止。"
+            else:
+                message = f"游戏结束: {new_state}"
+
+            # 通过 Bridge 显示对话框（带重启和返回菜单选项）
+            self.bridge.show_ending_dialog.emit("审讯结束", message)
+
+        def _restart(self):
+            """重新开始当前案件"""
+            if self.engine is None:
+                return
+            case_data = self.engine.case
+            self.load_case(case_data)
+
+        def _return_to_menu(self):
+            """返回主菜单"""
+            self.engine = None
+            self.bridge.clear_chat.emit()
+            self.bridge.set_input_enabled.emit(False)
+            self._countdown_timer.stop()
    
        def _on_generate_case(self):
            """打开案件生成对话框"""
@@ -1827,13 +1939,13 @@ def load_case(self, case_data):
            dialog.settings_saved.connect(self._on_settings_saved)
            dialog.exec()
    
-       def _on_settings_saved(self):
-           """设置保存后重新初始化 LLM"""
-           if self.engine and hasattr(self.engine, "suspect_agent"):
-               try:
-                   self.engine.suspect_agent._ensure_llm_client()
-               except Exception as exc:
-                   logger.warning(f"Engine reinit: {exc}")
+        def _on_settings_saved(self):
+            """设置保存后重新初始化 LLM"""
+            if self.engine and hasattr(self.engine, "reinitialize_llm"):
+                try:
+                    self.engine.reinitialize_llm()
+                except Exception as exc:
+                    logger.warning(f"Engine reinit: {exc}")
    
        def _on_save_game(self):
            """存档"""
@@ -1849,49 +1961,58 @@ def load_case(self, case_data):
                logger.error(f"存档失败: {exc}")
                self.bridge.show_dialog.emit("存档失败", f"保存失败: {exc}")
    
-       def _on_load_game(self):
-           """读档 - 显示存档列表"""
-           try:
-               sessions = db.list_sessions()
-               # 格式化存档列表
-               formatted_sessions = [
-                   {
-                       "session_id": s["session_id"],
-                       "case_id": s.get("case_id", "未知案件"),
-                       "created_at": s.get("created_at", "")
-                   }
-                   for s in sessions
-               ]
-               self.bridge.show_save_list.emit(formatted_sessions)
-           except Exception as exc:
-               logger.error(f"获取存档列表失败: {exc}")
-               self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
+        def _on_load_game(self):
+            """读档 - 显示存档列表"""
+            try:
+                sessions = db.list_sessions()
+                # 格式化存档列表
+                formatted_sessions = [
+                    {
+                        "session_id": s["session_id"],
+                        "case_id": s.get("case_id", "未知案件"),
+                        "created_at": s.get("saved_at", "")  # 修复：使用 saved_at 字段
+                    }
+                    for s in sessions
+                ]
+                self.bridge.show_save_list.emit(formatted_sessions)
+            except Exception as exc:
+                logger.error(f"获取存档列表失败: {exc}")
+                self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
    
-       def _on_save_selected(self, session_id):
-           """选择存档后加载"""
-           try:
-               session_data = db.load_full_session(session_id)
-               if session_data:
-                   self.engine = InterrogationEngine.from_dict(session_data)
-                   
-                   # 构建完整状态
-                   state = {
-                       "suspects": [{"name": s.name, "pressure": s.pressure} for s in self.engine.suspects],
-                       "evidences": self.engine.case.get("evidences", []),
-                       "time_left": self.engine.time_left,
-                       "current_suspect_index": self.engine.current_suspect_index,
-                   }
-                   
-                   self.bridge.init_game_state.emit(state)
-                   self.bridge.set_input_enabled.emit(True)
-                   
-                   if self.engine.state == "interrogating":
-                       self._countdown_timer.start()
-               else:
-                   self.bridge.show_dialog.emit("读档失败", "存档数据不存在")
-           except Exception as exc:
-               logger.error(f"加载存档失败: {exc}")
-               self.bridge.show_dialog.emit("读档失败", f"加载失败: {exc}")
+        def _on_save_selected(self, session_id):
+            """选择存档后加载"""
+            try:
+                result = db.load_full_session(session_id)
+                if result is None:
+                    self.bridge.show_dialog.emit("读档失败", "存档数据不存在")
+                    return
+
+                case_id, engine_state_dict = result  # 正确解包元组
+                case_data = db.load_case(case_id)     # 加载案件数据
+                if case_data is None:
+                    self.bridge.show_dialog.emit("读档失败", f"关联案件未找到: {case_id}")
+                    return
+
+                self.engine = InterrogationEngine.from_dict(engine_state_dict, case_data)
+
+                # 构建完整状态
+                state = {
+                    "suspects": [{"name": s.name, "pressure": s.pressure} for s in self.engine.suspects],
+                    "evidences": case_data.get("evidences", []),
+                    "time_left": self.engine.time_left,
+                    "current_suspect_index": self.engine.current_suspect_index,
+                    "state": self.engine.state,
+                    "case_id": case_id,
+                }
+
+                self.bridge.init_game_state.emit(state)
+                self.bridge.set_input_enabled.emit(True)
+
+                if self.engine.state == "interrogating":
+                    self._countdown_timer.start()
+            except Exception as exc:
+                logger.error(f"加载存档失败: {exc}")
+                self.bridge.show_dialog.emit("读档失败", f"加载失败: {exc}")
    ```
 
 3. 在 `InterrogationEngine` 中添加公共方法（如果不存在）：
@@ -2325,293 +2446,22 @@ def load_case(self, case_data):
 
 ---
 
-## 问题修复与方案补充
+## 已整合修复
 
-### 严重问题 (会导致功能失败)
+以下问题在架构评审中被识别，已整合到方案正文中：
 
-#### 问题 1：worker.terminate() 不安全
-- **位置**: `_on_worker_timeout()` (1730行), `_on_cancel_operation()` (1740行)
-- **问题**: `terminate()` 强制终止线程，不执行 `finished` 信号，导致 `_cleanup_after_worker()` 不被调用，QTimer 泄漏
-- **修复方案**:
-```python
-# 方案 A：使用中断标志位
-class WebWorker(QThread):
-    def __init__(self, engine, action, content, evidence_id=None):
-        super().__init__()
-        self._engine = engine
-        self._action = action
-        self._content = content
-        self._evidence_id = evidence_id
-        self._interrupted = False
-
-    def interrupt(self):
-        self._interrupted = True
-
-    def run(self):
-        try:
-            events = self._engine.submit_action(
-                self._action, self._content, evidence_id=self._evidence_id
-            )
-            if not self._interrupted:
-                self.finished.emit(events)
-        except Exception as exc:
-            if not self._interrupted:
-                self.error.emit(str(exc))
-
-# 方案 B：使用 requestInterruption (Qt 5.10+)
-def _on_cancel_operation(self):
-    if self._current_worker and self._current_worker.isRunning():
-        self._current_worker.requestInterruption()
-        self._current_worker.wait(1000)  # 等待最多1秒
-        self._cleanup_after_worker()
-        self.bridge.hide_loading.emit()
-        self.bridge.add_message.emit("system", "操作已取消", "")
-        self.bridge.set_input_enabled.emit(True)
-        self._current_worker = None
-```
-
-#### 问题 2：modal.js 调用方式错误
-- **位置**: 1168行
-- **问题**: `window.bridge.pythonBridge.selectSave()` 不存在，`pythonBridge` 不是 bridge 的属性
-- **修复方案**:
-```javascript
-// 在 bridge.js 中添加 selectSave 方法
-selectSave(sessionId) {
-    if (this.pythonBridge) {
-        this.pythonBridge.selectSave(sessionId);
-    }
-}
-
-// 在 modal.js 中调用
-showSaveList(sessions) {
-    // ... 生成存档列表 HTML ...
-    document.querySelectorAll('.save-item').forEach((item, index) => {
-        item.addEventListener('click', () => {
-            this.hide();
-            window.bridge.selectSave(sessions[index].session_id);  // 修复调用方式
-        });
-    });
-}
-```
-
-#### 问题 3：状态初始化数据不完整
-- **位置**: 1617-1622行 `load_case()`
-- **问题**: `init_game_state` 缺少审讯状态、案件ID 等信息，存档恢复不完整
-- **修复方案**:
-```python
-def load_case(self, case_data):
-    self.engine = InterrogationEngine(case_data)
-
-    state = {
-        "suspects": [{"name": s.name, "pressure": s.pressure} for s in self.engine.suspects],
-        "evidences": case_data.get("evidences", []),
-        "time_left": self.engine.time_left,
-        "current_suspect_index": self.engine.current_suspect_index,
-        "state": self.engine.state,  # 新增：审讯状态
-        "case_id": case_data.get("case_id"),  # 新增：案件ID
-    }
-
-    self.bridge.init_game_state.emit(state)
-    self.bridge.set_input_enabled.emit(True)
-
-    if self.engine.suspects:
-        self._on_suspect_changed(0)
-```
-
-#### 问题 4：访问私有属性
-- **位置**: 1824行
-- **问题**: 访问 `self.engine.suspect_agent._ensure_llm_client()` 违反"后端逻辑不变"原则
-- **修复方案**:
-```python
-# 方案 A：通过公共事件机制
-class InterrogationEngine:
-    def reinitialize_llm(self):
-        """公共方法：重新初始化 LLM"""
-        self.suspect_agent._ensure_llm_client()
-
-# 方案 B：通过信号机制重初始化
-def _on_settings_saved(self):
-    # 发送信号通知引擎重初始化
-    self.engine.settings_updated.emit()
-    # 或直接调用公共方法
-    if hasattr(self.engine, 'reinitialize_llm'):
-        self.engine.reinitialize_llm()
-```
-
-#### 问题 5：QTimer 线程安全
-- **位置**: `_start_worker` 中创建的 QTimer
-- **问题**: QTimer 在非主线程创建会导致 `QObject: Cannot create children for a parent in a different thread`
-- **修复方案**:
-```python
-def _start_worker(self, action, content, evidence_id=None):
-    if self._current_worker and self._current_worker.isRunning():
-        logger.warning("上一个操作仍在进行中")
-        return
-    if self.engine is None:
-        return
-
-    self.bridge.show_loading.emit("正在审讯中...", True)
-    self.bridge.set_input_enabled.emit(False)
-    self._elapsed_seconds = 0
-
-    # 使用 QTimer.singleShot 替代在 Worker 中创建定时器
-    self._timeout_timer = QTimer(self)
-    self._timeout_timer.setSingleShot(True)
-    self._timeout_timer.timeout.connect(self._on_worker_timeout)
-    self._timeout_timer.start(LLM_TIMEOUT_SECONDS * 1000)
-
-    self._progress_timer = QTimer(self)
-    self._progress_timer.setInterval(1000)
-    self._progress_timer.timeout.connect(self._update_loading_progress)
-    self._progress_timer.start()
-
-    self._current_worker = WebWorker(self.engine, action, content, evidence_id)
-    self._current_worker.finished.connect(self._on_worker_finished)
-    self._current_worker.error.connect(self._on_worker_error)
-    self._current_worker.start()
-```
-
----
-
-### 中等问题 (可能导致运行时问题)
-
-#### 问题 6：存档列表数据结构假设
-- **位置**: 1847-1853行 `_on_load_game()`
-- **问题**: 假设 `db.list_sessions()` 返回固定结构，未做防御性处理
-- **修复方案**:
-```python
-def _on_load_game(self):
-    try:
-        sessions = db.list_sessions()
-        formatted_sessions = []
-        for s in sessions:
-            try:
-                formatted_sessions.append({
-                    "session_id": s.get("session_id", ""),
-                    "case_id": s.get("case_id", "未知案件"),
-                    "created_at": s.get("created_at", "")
-                })
-            except Exception:
-                logger.warning(f"存档数据格式异常: {s}")
-                continue
-        self.bridge.show_save_list.emit(formatted_sessions)
-    except Exception as exc:
-        logger.error(f"获取存档列表失败: {exc}")
-        self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
-```
-
-#### 问题 7：前端 HTML 元素假设
-- **位置**: `LoadingManager`, `ModalManager` 构造函数
-- **问题**: 假设 DOM 元素必须存在，否则 JavaScript 报错
-- **修复方案**:
-```javascript
-class LoadingManager {
-    constructor() {
-        this.overlay = document.getElementById('loading-overlay');
-        this.messageEl = document.getElementById('loading-message');
-        this.progressEl = document.getElementById('loading-progress');
-        this.cancelBtn = document.getElementById('loading-cancel');
-        this.isVisible = false;
-        this._setupEventListeners();
-    }
-
-    _setupEventListeners() {
-        if (this.cancelBtn) {
-            this.cancelBtn.addEventListener('click', () => {
-                if (window.bridge) {
-                    window.bridge.cancelOperation();
-                }
-                this.hide();
-            });
-        }
-    }
-
-    show(message, cancellable = true) {
-        if (!this.overlay) {
-            console.warn('Loading overlay not found');
-            return;
-        }
-        // ... 后续代码 ...
-    }
-}
-```
-
-#### 问题 8：Worker 错误后状态不一致
-- **位置**: `_on_worker_error()` (1718行)
-- **问题**: 错误后 UI 重置但引擎状态可能已部分修改
-- **修复方案**:
-```python
-def _on_worker_error(self, error_msg):
-    self._cleanup_after_worker()
-    logger.error(f"操作失败: {error_msg}")
-    self.bridge.hide_loading.emit()
-    self.bridge.add_message.emit("system", f"操作失败: {error_msg}", "")
-    self.bridge.set_input_enabled.emit(True)
-    self._current_worker = None
-
-    # 同步引擎状态到 UI
-    if self.engine:
-        events = self.engine.get_current_state()
-        self.update_ui_from_engine(events)
-```
-
-#### 问题 9：阶段1视觉验证不可执行
-- **位置**: 687行
-- **问题**: CLI 环境下无法截图验证
-- **修复方案**:
-```python
-# 更新验收标准
-# 原：视觉验证（通过截图或描述）
-# 改：使用 pytest-screenshot 进行自动化截图对比，或添加人工验收步骤
-
-# 在 test_web_structure.py 中添加截图测试
-def test_visual_dark_theme(app, selenium):
-    """验证暗黑科技风格视觉效果"""
-    app.load_web_ui()
-    screenshot = selenium.find_element('.panel-center').screenshot_as_png
-    # 与基准截图对比，或保存供人工验收
-    with open('tests/screenshots/baseline.png', 'rb') as f:
-        baseline = f.read()
-    # 允许一定差异（颜色压缩等）
-    assert compare_images(screenshot, baseline, tolerance=0.1), "视觉风格与基准不一致"
-```
-
----
-
-### 轻微问题 (代码质量/文档)
-
-#### 问题 10：风险缓解措施不具体
-- **位置**: 风险表 "内存占用过高" 行
-- **修复方案**: 更新风险表
-```
-| 内存占用过高 | 性能下降 | 1. WebView 内存限制：self.web_view.settings().setAttribute(QtWebEngineWidgets.QWebEngineSettings.LocalStorageLimit, 50 * 1024 * 1024)
-|              |         | 2. HTML 资源懒加载：证据卡片使用时再加载完整内容
-|              |         | 3. 及时释放：对话历史超过100条时清理早期消息 DOM
-|              |         | 4. 定期 gc.collect()：在后台任务结束时显式垃圾回收
-```
-
-#### 问题 11：缺少原有测试验证
-- **位置**: 阶段0验收标准
-- **修复方案**: 添加原有测试验证
-```python
-# 阶段0验收命令更新
-验收命令：`pytest tests/test_web_channel.py tests/test_web_init.py tests/test_resource_helper.py tests/test_main_window.py -v`
-```
-
-#### 问题 12：PyInstaller spec 配置不完整
-- **位置**: 2259行 `runtime_tmpdir=None`
-- **修复方案**:
-```python
-import tempfile
-import sys
-
-exe = EXE(
-    # ... 其他参数 ...
-    runtime_tmpdir=tempfile.gettempdir() if hasattr(sys, 'frozen') else None,
-    # 或指定应用程序数据目录
-    # runtime_tmpdir=QStandardPaths.writableLocation(QStandardPaths.AppDataLocation),
-)
-```
+| 问题 | 状态 | 整合位置 |
+|------|------|----------|
+| Worker.terminate() 不安全 | ✅ 已修复 | 关键技术决策 #2 + 阶段3代码 |
+| db.load_full_session() 返回值处理 | ✅ 已修复 | 阶段3 _on_save_selected() |
+| 存档字段名不一致 | ✅ 已修复 | 阶段3 _on_load_game() |
+| loadFinished 信号连接 | ✅ 已修复 | 阶段3 WebMainWindow.__init__() |
+| 访问私有属性 | ✅ 已修复 | 阶段3 _on_settings_saved() |
+| _handle_ending 功能缺失 | ✅ 已修复 | 阶段3 _handle_ending() |
+| 状态初始化数据不完整 | ✅ 已修复 | 关键技术决策 #4 GameStateDict |
+| Bridge 重试机制 | ✅ 已改进 | 阶段2 bridge.js |
+| 启动画面 | ✅ 已添加 | 关键技术决策 #5 |
+| 打包验证 | ✅ 已添加 | 阶段0验收标准 |
 
 ---
 
@@ -2665,6 +2515,26 @@ ls -la ui/web/js/
 | LLM 调用超时 | 用户感知卡顿 | 加载指示器 + 超时处理 + 取消操作 |
 | Bridge 初始化失败 | 程序无法使用 | 重试机制 + 错误提示 |
 
+## 降级策略
+
+如果在阶段0发现 QWebEngineView 打包不可行或性能问题无法接受，可采用以下降级方案：
+
+### 方案A：QSS 重新样式化原生 Qt 组件（推荐）
+- **工期**：约5天
+- **优点**：无额外依赖，打包简单，内存开销小
+- **缺点**：UI 效果受限于 Qt Widgets 能力
+- **实施**：使用 QSS 实现暗黑科技风格，保留现有 MainWindow 架构
+
+### 方案B：onedir 模式替代 onefile 模式
+- **工期**：约1天（配置调整）
+- **优点**：打包成功率更高
+- **缺点**：分发目录而非单文件
+
+### 方案C：使用 Nuitka 替代 PyInstaller
+- **工期**：约2天（工具切换）
+- **优点**：编译为原生代码，性能更好
+- **缺点**：学习成本，配置复杂
+
 ---
 
 ## 总结
@@ -2672,19 +2542,23 @@ ls -la ui/web/js/
 本文档提供了从阶段 0 到阶段 5 的完整 WebView UI 重构方案。每个阶段都有明确的目标、验收标准和 Agent 任务分解。通过测试驱动开发和多 Agent 协作，确保重构过程可控、质量可靠。
 
 **关键里程碑**：
-- 阶段 0：环境准备（1天）
-- 阶段 1：UI 框架（2天）
-- 阶段 2：通信层（2天）
-- 阶段 3：后端集成（3天）
+- 阶段 0：环境准备（1.5天）- 含打包可行性验证
+- 阶段 1：UI 框架（2.5天）
+- 阶段 2：通信层（2.5天）
+- 阶段 3：后端集成（4.5天）- 接口修复和线程安全
 - 阶段 4：UI 打磨（2天）
-- 阶段 5：测试打包（2天）
+- 阶段 5：测试打包（3天）
 
-**总预计工期**：12个工作日
+**总预计工期**：16个工作日（原估算12天，根据评审调整）
 
 **关键改进点**：
 1. 资源路径管理：使用 Qt 资源系统解决打包后路径问题
 2. 加载状态管理：加载指示器 + 超时处理 + 取消操作
-3. 状态同步机制：统一的游戏状态初始化信号
+3. 状态同步机制：统一的游戏状态初始化信号 + GameStateDict 类型定义
 4. 存档选择 UI：前端模态框实现存档列表选择
 5. Bridge 重试机制：初始化失败自动重试
-6. 公共 API：避免访问私有属性
+6. 公共 API：避免访问私有属性，使用 reinitialize_llm 公共方法
+7. 线程安全：Worker 使用 interrupt() 替代 terminate()，安全中断
+8. 启动画面：QSplashScreen 解决 WebEngine 初始化白屏问题
+9. 结局处理：show_ending_dialog 信号支持重启和返回菜单
+10. 降级策略：QSS 降级方案确保项目可持续交付

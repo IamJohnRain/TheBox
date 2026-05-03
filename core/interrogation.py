@@ -182,6 +182,20 @@ class InterrogationEngine:
         engine.state = state.get("state", "selecting")
         return engine
 
+    def get_evidence(self, evidence_id: str) -> Optional[dict]:
+        """获取证据信息（公共 API）。
+
+        Args:
+            evidence_id: 证据 ID。
+
+        Returns:
+            证据字典，若未找到返回 None。
+        """
+        for e in self.case.get("evidences", []):
+            if e.get("id") == evidence_id:
+                return e
+        return None
+
     def _find_evidence(self, evidence_id: Optional[str]) -> Optional[dict]:
         """Find an evidence by ID in the case data."""
         if evidence_id is None:

@@ -12,3 +12,4 @@ radon>=6.0
 flake8>=6.0
 black>=23.0
 isort>=5.12
+pyside6-webengine>=6.5.0

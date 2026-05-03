@@ -5,14 +5,7 @@ model: minimax-cn-coding-plan/MiniMax-M2.7
 temperature: 0.0
 permission:
   edit: deny
-  bash:
-    "*": ask
-    "uv run *": allow
-    "pytest *": allow
-    "flake8 *": allow
-    "python -c *": allow
-    "git *": allow
-    "ls *": allow
+  bash: allow
   read: allow
   glob: allow
   grep: allow
