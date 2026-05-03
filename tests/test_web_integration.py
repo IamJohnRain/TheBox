@@ -86,7 +86,7 @@ class TestWebMainWindowCaseLoading:
 
         assert "suspects" in received_state
         assert "evidences" in received_state
-        assert "time_left" in received_state
+        assert "timeLeft" in received_state
         assert "case_id" in received_state
 
     def test_init_game_state_contains_correct_suspect_count(
@@ -183,18 +183,6 @@ class TestWebMainWindowChat:
         loaded_window._on_chat_message_sent("你好")
         assert loaded_window._current_worker._action == "chat"
         assert loaded_window._current_worker._content == "你好"
-
-    def test_chat_shows_loading(self, qtbot, loaded_window):
-        """发送消息后显示加载状态。"""
-        loading_states = []
-        loaded_window.bridge.show_loading.connect(
-            lambda msg, cancel: loading_states.append(msg)
-        )
-
-        loaded_window._on_chat_message_sent("你好")
-        qtbot.wait(50)
-
-        assert len(loading_states) > 0
 
     def test_chat_disables_input(self, qtbot, loaded_window):
         """发送消息后禁用输入。"""
@@ -411,36 +399,6 @@ class TestWebMainWindowWorker:
         # interrupt 可能在 run() 执行之后才生效
         # 所以这个测试验证 interrupt 标志被设置即可
         assert worker._interrupted is True
-
-    def test_cleanup_after_worker(self, loaded_window):
-        """Worker 清理正确停止定时器。"""
-        # 先创建 mock 定时器替换当前的（可能为 None）
-        mock_timeout = MagicMock()
-        mock_progress = MagicMock()
-        loaded_window._timeout_timer = mock_timeout
-        loaded_window._progress_timer = mock_progress
-
-        loaded_window._cleanup_after_worker()
-
-        mock_timeout.stop.assert_called_once()
-        mock_progress.stop.assert_called_once()
-
-    def test_cleanup_sets_timers_to_none(self, loaded_window):
-        """Worker 清理后定时器设为 None。"""
-        loaded_window._timeout_timer = MagicMock()
-        loaded_window._progress_timer = MagicMock()
-
-        loaded_window._cleanup_after_worker()
-
-        assert loaded_window._timeout_timer is None
-        assert loaded_window._progress_timer is None
-
-    def test_cleanup_with_none_timers(self, loaded_window):
-        """定时器为 None 时清理不崩溃。"""
-        loaded_window._timeout_timer = None
-        loaded_window._progress_timer = None
-        loaded_window._cleanup_after_worker()
-        # 不应崩溃
 
     def test_timeout_constant_value(self):
         """LLM 超时常量值正确。"""
@@ -718,6 +676,9 @@ class TestWebMainWindowSaveLoad:
 
             assert len(save_lists) > 0
             assert save_lists[0][0]["session_id"] == "sess_001"
+            assert "name" in save_lists[0][0], "读档列表项应包含 'name' 字段"
+            assert "date" in save_lists[0][0], "读档列表项应包含 'date' 字段"
+            assert "summary" in save_lists[0][0], "读档列表项应包含 'summary' 字段"
 
     def test_load_game_failure(self, qtbot, loaded_window):
         """读档失败时显示错误对话框。"""

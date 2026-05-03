@@ -1,78 +1,59 @@
 /**
  * @fileoverview 聊天消息模块。
  *
- * 管理聊天消息的添加、清空和输入控制，区分消息类型（玩家/嫌疑人/系统），
- * 并支持自动滚动到底部。
- *
- * @author The Box Dev Team
+ * 管理按嫌疑人分组的聊天消息，包括消息渲染、
+ * 嫌疑人切换、打字指示器等。
  */
 
-/**
- * ChatManager - 聊天消息管理类。
- *
- * 负责：
- * - 向聊天容器添加不同类型的消息（player/suspect/system）
- * - 清空聊天记录
- * - 启用/禁用输入框和发送按钮
- * - 自动滚动到最新消息
- */
 class ChatManager {
-    /**
-     * 创建 ChatManager 实例。
-     */
     constructor() {
-        /** @type {HTMLElement} 聊天消息容器 */
         this.container = document.getElementById('chat-container');
-
-        /** @type {HTMLInputElement} 聊天输入框 */
         this.input = document.getElementById('chat-input');
-
-        /** @type {HTMLButtonElement} 发送按钮 */
         this.sendBtn = document.getElementById('btn-send');
-
-        /** @type {HTMLHeadingElement} 聊天标题 */
         this.chatTitle = document.getElementById('chat-title');
+        this._typingEl = null;
+
+        this._messagesBySuspect = {};
+        this._currentSuspect = null;
     }
 
-    /**
-     * 添加消息到聊天流。
-     *
-     * @param {string} role - 消息角色：'player'（玩家）、'suspect'（嫌疑人）、'system'（系统）
-     * @param {string} content - 消息内容
-     * @param {string} [suspectName] - 嫌疑人名称（角色为 suspect 或 player 时显示）
-     * @returns {void}
-     *
-     * @example
-     * chatManager.addMessage('player', '你当时在哪里？', '审讯员');
-     * chatManager.addMessage('suspect', '我在家...', '张三');
-     * chatManager.addMessage('system', '审讯开始');
-     */
     addMessage(role, content, suspectName) {
-        if (!this.container) {
-            console.error('[ChatManager] Container element not found');
-            return;
-        }
+        if (!this.container) return;
+        if (!content || !content.trim()) return;
 
-        if (!content || !content.trim()) {
-            console.warn('[ChatManager] Empty message ignored');
-            return;
-        }
-
-        const messageEl = document.createElement('div');
-        messageEl.className = `message message-${role}`;
+        this._removeTypingIndicator();
 
         const time = new Date().toLocaleTimeString('zh-CN', {
             hour: '2-digit',
             minute: '2-digit',
         });
 
+        const owner = role === 'player'
+            ? (this._currentSuspect || '_default')
+            : (suspectName || '_default');
+
+        if (!this._messagesBySuspect[owner]) {
+            this._messagesBySuspect[owner] = [];
+        }
+        this._messagesBySuspect[owner].push({ role, content, suspectName, time });
+
+        if (owner === this._currentSuspect || owner === '_default' || role === 'system') {
+            this._renderMessage(role, content, suspectName, time);
+        }
+    }
+
+    _renderMessage(role, content, suspectName, time) {
+        if (!this.container) return;
+
+        const messageEl = document.createElement('div');
+        messageEl.className = `message message-${role}`;
+
         if (role === 'system') {
             messageEl.innerHTML = `
                 <div class="message-content">${this._escapeHtml(content)}</div>
             `;
         } else {
-            const displayName =
-                suspectName || (role === 'player' ? '审讯员' : '嫌疑人');
+            const displayName = suspectName || (role === 'player' ? '审讯员' : '嫌疑人');
             messageEl.innerHTML = `
                 <span class="message-sender">${this._escapeHtml(displayName)}</span>
                 <div class="message-content">${this._escapeHtml(content)}</div>
@@ -84,78 +65,98 @@ class ChatManager {
         this._scrollToBottom();
     }
 
-    /**
-     * 清空聊天记录。
-     * 保留一条系统提示消息。
-     */
+    switchSuspect(suspectName) {
+        this._currentSuspect = suspectName;
+        this._removeTypingIndicator();
+
+        if (!this.container) return;
+
+        this.container.innerHTML = '';
+
+        const defaultMsgs = this._messagesBySuspect['_default'] || [];
+        for (const msg of defaultMsgs) {
+            if (msg.role === 'system') {
+                this._renderMessage(msg.role, msg.content, msg.suspectName, msg.time);
+            }
+        }
+
+        const msgs = this._messagesBySuspect[suspectName] || [];
+        for (const msg of msgs) {
+            this._renderMessage(msg.role, msg.content, msg.suspectName, msg.time);
+        }
+
+        if (msgs.length === 0 && defaultMsgs.length === 0) {
+            const placeholder = document.createElement('div');
+            placeholder.className = 'message message-system';
+            placeholder.innerHTML = `<div class="message-content">与 ${this._escapeHtml(suspectName || '嫌疑人')} 的对话将在这里显示...</div>`;
+            this.container.appendChild(placeholder);
+        }
+    }
+
+    showTypingIndicator() {
+        if (!this.container || this._typingEl) return;
+
+        this._typingEl = document.createElement('div');
+        this._typingEl.className = 'message message-suspect typing-indicator';
+        this._typingEl.innerHTML = `
+            <div class="message-content">
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+            </div>
+        `;
+        this.container.appendChild(this._typingEl);
+        this._scrollToBottom();
+    }
+
+    hideTypingIndicator() {
+        this._removeTypingIndicator();
+    }
+
+    _removeTypingIndicator() {
+        if (this._typingEl && this._typingEl.parentNode) {
+            this._typingEl.parentNode.removeChild(this._typingEl);
+        }
+        this._typingEl = null;
+    }
+
     clear() {
         if (!this.container) return;
         this.container.innerHTML = '';
-        // 添加默认系统提示
+        this._typingEl = null;
+        this._messagesBySuspect = {};
+        this._currentSuspect = null;
+
         const placeholder = document.createElement('div');
         placeholder.className = 'message message-system';
         placeholder.innerHTML = '<div class="message-content">选择嫌疑人开始审讯...</div>';
         this.container.appendChild(placeholder);
     }
 
-    /**
-     * 启用或禁用聊天输入。
-     *
-     * @param {boolean} enabled - true 启用，false 禁用
-     */
     setInputEnabled(enabled) {
-        if (this.input) {
-            this.input.disabled = !enabled;
-        }
-        if (this.sendBtn) {
-            this.sendBtn.disabled = !enabled;
-        }
+        if (this.input) this.input.disabled = !enabled;
+        if (this.sendBtn) this.sendBtn.disabled = !enabled;
     }
 
-    /**
-     * 设置聊天标题。
-     *
-     * @param {string} title - 标题文本
-     */
     setTitle(title) {
-        if (this.chatTitle) {
-            this.chatTitle.textContent = title;
-        }
+        if (this.chatTitle) this.chatTitle.textContent = title;
     }
 
-    /**
-     * 获取输入框文本并清空。
-     *
-     * @returns {string} 输入的文本，空字符串表示无有效输入
-     */
     getInputText() {
         if (!this.input) return '';
         const text = this.input.value.trim();
-        if (text) {
-            this.input.value = '';
-        }
+        if (text) this.input.value = '';
         return text;
     }
 
-    /**
-     * 自动滚动到聊天底部。
-     * @private
-     */
     _scrollToBottom() {
         if (this.container) {
-            // 使用 requestAnimationFrame 确保在 DOM 更新后执行
             requestAnimationFrame(() => {
                 this.container.scrollTop = this.container.scrollHeight;
             });
         }
     }
 
-    /**
-     * HTML 转义，防止 XSS。
-     * @private
-     * @param {string} text - 原始文本
-     * @returns {string} 转义后的安全文本
-     */
     _escapeHtml(text) {
         if (!text) return '';
         const div = document.createElement('div');

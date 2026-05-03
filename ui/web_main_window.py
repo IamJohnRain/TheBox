@@ -14,15 +14,14 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWidgets import QMainWindow
 
 from core import db
+from core.config import get_api_key, get_settings, save_settings
 from core.interrogation import InterrogationEngine
+from core.providers import get_provider_list, get_provider_models
 from ui.web_bridge import WebBridge
 from ui.resource_helper import get_html_url
-from ui.admin_dialog import AdminDialog
-from ui.settings_dialog import SettingsDialog
 
 logger = logging.getLogger("thebox")
 
-# 配置常量
 LLM_TIMEOUT_SECONDS = 60
 
 
@@ -57,6 +56,74 @@ class WebWorker(QThread):
                 self.error.emit(str(exc))
 
 
+class TestConnectionWorker(QThread):
+    """后台线程 Worker，测试 LLM 连接。"""
+
+    finished = Signal(bool, str)
+
+    def __init__(self, api_key, base_url, model):
+        super().__init__()
+        self._api_key = api_key
+        self._base_url = base_url
+        self._model = model
+
+    def run(self):
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+            response = client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
+            )
+            content = response.choices[0].message.content
+            msg = f"连接成功！模型响应: {content[:50] if content else '(空响应)'}"
+            self.finished.emit(True, msg)
+        except Exception as exc:
+            logger.error(f"连接测试失败: {exc}")
+            self.finished.emit(False, f"连接失败: {exc}")
+
+
+class CaseGenerateWorker(QThread):
+    """后台线程 Worker，生成案件。"""
+
+    finished = Signal(dict)
+    error = Signal(str)
+    progress = Signal(str)
+
+    def __init__(self, background, model_override=None):
+        super().__init__()
+        self._background = background
+        self._model_override = model_override
+        self._interrupted = False
+
+    def interrupt(self):
+        self._interrupted = True
+
+    def run(self):
+        try:
+            self.progress.emit("正在初始化 LLM...")
+            if self._model_override:
+                from core.llm_client import LLMClient
+
+                client = LLMClient()
+                if not client.is_initialized:
+                    client.initialize()
+                client.set_model(self._model_override)
+
+            self.progress.emit("正在生成案件，请稍候...")
+            from core.case_generator import generate_case
+
+            case_dict = generate_case(self._background)
+            if not self._interrupted:
+                self.finished.emit(case_dict)
+        except Exception as exc:
+            if not self._interrupted:
+                logger.error(f"案件生成失败: {exc}")
+                self.error.emit(str(exc))
+
+
 class WebMainWindow(QMainWindow):
     """基于 WebView 的主窗口。"""
 
@@ -67,34 +134,25 @@ class WebMainWindow(QMainWindow):
 
         self.engine: Optional[InterrogationEngine] = None
         self._current_worker: Optional[WebWorker] = None
-        self._timeout_timer: Optional[QTimer] = None
-        self._progress_timer: Optional[QTimer] = None
-        self._elapsed_seconds = 0
+        self._test_worker: Optional[TestConnectionWorker] = None
+        self._case_gen_worker: Optional[CaseGenerateWorker] = None
 
-        # 创建 WebView
         self.web_view = QWebEngineView()
 
-        # 设置通信通道
         self.bridge = WebBridge()
         self.channel = QWebChannel()
         self.channel.registerObject("bridge", self.bridge)
         self.web_view.page().setWebChannel(self.channel)
 
-        # 加载 HTML
         self.web_view.setUrl(get_html_url())
-
-        # 设置中心部件
         self.setCentralWidget(self.web_view)
 
-        # 初始化倒计时
         self._countdown_timer = QTimer(self)
         self._countdown_timer.setInterval(1000)
         self._countdown_timer.timeout.connect(self._on_timer_tick)
 
-        # 连接 Bridge 信号
         self._connect_bridge_signals()
 
-        # 如果有初始案件数据，加载
         if case_data:
             self.web_view.loadFinished.connect(
                 lambda ok: self.load_case(case_data) if ok else None
@@ -115,29 +173,35 @@ class WebMainWindow(QMainWindow):
         self.bridge.save_selected.connect(self._on_save_selected)
         self.bridge.restart_requested.connect(self._restart)
         self.bridge.return_to_menu_requested.connect(self._return_to_menu)
+        self.bridge.submit_settings_requested.connect(self._on_submit_settings)
+        self.bridge.test_connection_requested.connect(self._on_test_connection)
+        self.bridge.submit_case_generation_requested.connect(
+            self._on_submit_case_generation
+        )
+        self.bridge.cancel_case_generation_requested.connect(
+            self._on_cancel_case_generation
+        )
 
     def load_case(self, case_data):
         """加载案件到引擎并更新 UI。"""
         self.engine = InterrogationEngine(case_data)
 
-        # 构建完整初始状态
         state = {
             "suspects": [
                 {"name": s.name, "pressure": s.pressure}
                 for s in self.engine.suspects
             ],
             "evidences": case_data.get("evidences", []),
-            "time_left": self.engine.time_left,
+            "timeLeft": self.engine.time_left,
             "current_suspect_index": 0,
             "state": self.engine.state,
             "case_id": case_data.get("case_id", ""),
+            "caseTitle": case_data.get("title", ""),
         }
 
-        # 一次性发送完整状态
         self.bridge.init_game_state.emit(state)
         self.bridge.set_input_enabled.emit(True)
 
-        # 如果有嫌疑人，选择第一个
         if self.engine.suspects:
             self._on_suspect_changed(0)
 
@@ -175,7 +239,6 @@ class WebMainWindow(QMainWindow):
         if self.engine is None:
             return
 
-        # 获取证据信息
         evidence = self.engine.get_evidence(evidence_id)
         evidence_name = (
             evidence.get("name", evidence_id) if evidence else evidence_id
@@ -195,26 +258,9 @@ class WebMainWindow(QMainWindow):
         if self.engine is None:
             return
 
-        # 显示加载状态
-        self.bridge.show_loading.emit("正在审讯中...", True)
         self.bridge.set_input_enabled.emit(False)
+        self.bridge.show_typing_indicator.emit(True)
 
-        # 重置计时
-        self._elapsed_seconds = 0
-
-        # 启动超时计时器
-        self._timeout_timer = QTimer(self)
-        self._timeout_timer.setSingleShot(True)
-        self._timeout_timer.timeout.connect(self._on_worker_timeout)
-        self._timeout_timer.start(LLM_TIMEOUT_SECONDS * 1000)
-
-        # 启动进度更新计时器
-        self._progress_timer = QTimer(self)
-        self._progress_timer.setInterval(1000)
-        self._progress_timer.timeout.connect(self._update_loading_progress)
-        self._progress_timer.start()
-
-        # 创建并启动 Worker
         self._current_worker = WebWorker(
             self.engine, action, content, evidence_id
         )
@@ -222,26 +268,19 @@ class WebMainWindow(QMainWindow):
         self._current_worker.error.connect(self._on_worker_error)
         self._current_worker.start()
 
-    def _update_loading_progress(self):
-        """更新加载进度。"""
-        self._elapsed_seconds += 1
-        self.bridge.update_loading_progress.emit(self._elapsed_seconds)
-
     def _on_worker_finished(self, events):
         """Worker 完成，处理事件。"""
-        self._cleanup_after_worker()
         self.update_ui_from_engine(events)
-        self.bridge.hide_loading.emit()
         self.bridge.set_input_enabled.emit(True)
+        self.bridge.show_typing_indicator.emit(False)
         self._current_worker = None
 
     def _on_worker_error(self, error_msg):
         """Worker 出错。"""
-        self._cleanup_after_worker()
         logger.error(f"操作失败: {error_msg}")
-        self.bridge.hide_loading.emit()
         self.bridge.add_message.emit("system", f"操作失败: {error_msg}", "")
         self.bridge.set_input_enabled.emit(True)
+        self.bridge.show_typing_indicator.emit(False)
         self._current_worker = None
 
     def _on_worker_timeout(self):
@@ -249,10 +288,9 @@ class WebMainWindow(QMainWindow):
         if self._current_worker and self._current_worker.isRunning():
             self._current_worker.interrupt()
             self._current_worker.wait(2000)
-            self._cleanup_after_worker()
-            self.bridge.hide_loading.emit()
             self.bridge.add_message.emit("system", "响应超时，请重试", "")
             self.bridge.set_input_enabled.emit(True)
+            self.bridge.show_typing_indicator.emit(False)
             self._current_worker = None
 
     def _on_cancel_operation(self):
@@ -260,20 +298,10 @@ class WebMainWindow(QMainWindow):
         if self._current_worker and self._current_worker.isRunning():
             self._current_worker.interrupt()
             self._current_worker.wait(2000)
-            self._cleanup_after_worker()
-            self.bridge.hide_loading.emit()
             self.bridge.add_message.emit("system", "操作已取消", "")
             self.bridge.set_input_enabled.emit(True)
+            self.bridge.show_typing_indicator.emit(False)
             self._current_worker = None
-
-    def _cleanup_after_worker(self):
-        """清理 Worker 相关资源。"""
-        if self._timeout_timer:
-            self._timeout_timer.stop()
-            self._timeout_timer = None
-        if self._progress_timer:
-            self._progress_timer.stop()
-            self._progress_timer = None
 
     def _on_timer_tick(self):
         """倒计时更新。"""
@@ -328,7 +356,6 @@ class WebMainWindow(QMainWindow):
         else:
             message = f"游戏结束: {new_state}"
 
-        # 通过 Bridge 显示对话框
         self.bridge.show_ending_dialog.emit("审讯结束", message)
 
     def _restart(self):
@@ -345,25 +372,137 @@ class WebMainWindow(QMainWindow):
         self.bridge.set_input_enabled.emit(False)
         self._countdown_timer.stop()
 
-    def _on_generate_case(self):
-        """打开案件生成对话框。"""
-        dialog = AdminDialog(self)
-        dialog.case_generated.connect(self.load_case)
-        dialog.exec()
+    # ================================================================
+    # Settings - WebView Modal
+    # ================================================================
 
     def _on_llm_settings(self):
-        """打开 LLM 设置对话框。"""
-        dialog = SettingsDialog(self)
-        dialog.settings_saved.connect(self._on_settings_saved)
-        dialog.exec()
+        """发送当前设置数据到前端显示设置模态框。"""
+        settings = get_settings()
+        provider_id = settings["provider"]
+        api_key = get_api_key(provider_id=provider_id)
+        providers_raw = get_provider_list()
+        models = get_provider_models(provider_id)
 
-    def _on_settings_saved(self):
-        """设置保存后重新初始化 LLM。"""
+        from core.providers import PROVIDERS
+
+        providers = []
+        for p in providers_raw:
+            pid = p["id"]
+            pinfo = PROVIDERS.get(pid, {})
+            providers.append({
+                "id": pid,
+                "name": p["name"],
+                "default_base_url": pinfo.get("base_url", ""),
+                "default_model": pinfo.get("default_model", ""),
+                "models": pinfo.get("models", []),
+            })
+
+        modal_data = {
+            "provider": provider_id,
+            "api_key": api_key,
+            "base_url": settings["base_url"],
+            "model": settings["model"],
+            "providers": providers,
+            "models": models,
+        }
+        self.bridge.show_settings_modal.emit(modal_data)
+
+    def _on_submit_settings(self, provider, api_key, base_url, model):
+        """保存设置。"""
+        if not api_key or not base_url or not model:
+            self.bridge.settings_test_result.emit(
+                False, "API Key、Base URL 和模型名称不能为空"
+            )
+            return
+
+        save_settings(provider, base_url, model, api_key)
+
+        try:
+            from core.llm_client import llm_client
+
+            llm_client.reinitialize(provider, api_key, base_url, model)
+        except Exception as exc:
+            logger.warning(f"LLMClient 重新初始化失败: {exc}")
+
         if self.engine and hasattr(self.engine, "reinitialize_llm"):
             try:
                 self.engine.reinitialize_llm()
             except Exception as exc:
                 logger.warning(f"Engine reinit: {exc}")
+
+        self.bridge.settings_saved.emit()
+
+    def _on_test_connection(self, api_key, base_url, model):
+        """在后台线程中测试 LLM 连接。"""
+        if self._test_worker and self._test_worker.isRunning():
+            return
+
+        if not api_key or not base_url or not model:
+            self.bridge.settings_test_result.emit(
+                False, "API Key、Base URL 和模型名称不能为空"
+            )
+            return
+
+        self._test_worker = TestConnectionWorker(api_key, base_url, model)
+        self._test_worker.finished.connect(self._on_test_connection_result)
+        self._test_worker.start()
+
+    def _on_test_connection_result(self, success, message):
+        """测试连接结果回调。"""
+        self.bridge.settings_test_result.emit(success, message)
+        self._test_worker = None
+
+    # ================================================================
+    # Case Generation - WebView Modal
+    # ================================================================
+
+    def _on_generate_case(self):
+        """显示案件生成模态框。"""
+        self.bridge.show_generate_modal.emit()
+
+    def _on_submit_case_generation(self, background, model):
+        """在后台线程中生成案件。"""
+        if self._case_gen_worker and self._case_gen_worker.isRunning():
+            return
+
+        if not background.strip():
+            self.bridge.case_generation_error.emit("背景故事不能为空")
+            return
+
+        self._case_gen_worker = CaseGenerateWorker(
+            background, model.strip() or None
+        )
+        self._case_gen_worker.finished.connect(self._on_case_generated)
+        self._case_gen_worker.error.connect(self._on_case_generation_error)
+        self._case_gen_worker.progress.connect(self._on_case_generation_progress)
+        self._case_gen_worker.start()
+
+    def _on_case_generated(self, case_dict):
+        """案件生成成功。"""
+        self.bridge.case_generation_complete.emit(case_dict)
+        self._case_gen_worker = None
+        self.load_case(case_dict)
+
+    def _on_case_generation_error(self, error_msg):
+        """案件生成失败。"""
+        self.bridge.case_generation_error.emit(f"案件生成失败: {error_msg}")
+        self._case_gen_worker = None
+
+    def _on_case_generation_progress(self, status_msg):
+        """案件生成进度更新。"""
+        self.bridge.case_generation_progress.emit(status_msg)
+
+    def _on_cancel_case_generation(self):
+        """取消案件生成。"""
+        if self._case_gen_worker and self._case_gen_worker.isRunning():
+            self._case_gen_worker.interrupt()
+            self._case_gen_worker.wait(2000)
+            self._case_gen_worker = None
+
+    # ================================================================
+    # Save / Load
+    # ================================================================
 
     def _on_save_game(self):
         """存档。"""
@@ -372,10 +511,14 @@ class WebMainWindow(QMainWindow):
         try:
             session_id = str(uuid.uuid4())
             case_id = self.engine.case.get("case_id", "unknown")
+            case_title = self.engine.case.get("title", "未知案件")
             engine_state_dict = self.engine.to_dict()
             db.save_full_session(session_id, case_id, engine_state_dict)
+
+            from datetime import datetime as dt
+            now_str = dt.now().strftime("%Y-%m-%d %H:%M")
             self.bridge.show_dialog.emit(
-                "存档成功", f"游戏已保存！\n存档ID: {session_id[:8]}..."
+                "存档成功", f"「{case_title}」已保存\n{now_str}"
             )
         except Exception as exc:
             logger.error(f"存档失败: {exc}")
@@ -385,20 +528,30 @@ class WebMainWindow(QMainWindow):
         """读档 - 显示存档列表。"""
         try:
             sessions = db.list_sessions()
-            formatted_sessions = [
-                {
+            formatted_sessions = []
+            for s in sessions:
+                case_id = s.get("case_id", "")
+                case_data = db.load_case(case_id)
+                case_title = case_data.get("title", "未知案件") if case_data else "未知案件"
+
+                saved_at = s.get("saved_at", "")
+                try:
+                    from datetime import datetime as dt
+                    parsed = dt.fromisoformat(saved_at)
+                    date_str = parsed.strftime("%Y-%m-%d %H:%M")
+                except (ValueError, TypeError):
+                    date_str = saved_at
+
+                formatted_sessions.append({
                     "session_id": s["session_id"],
-                    "case_id": s.get("case_id", "未知案件"),
-                    "created_at": s.get("saved_at", ""),
-                }
-                for s in sessions
-            ]
+                    "name": f"{case_title} - {date_str}",
+                    "date": date_str,
+                    "summary": "",
+                })
             self.bridge.show_save_list.emit(formatted_sessions)
         except Exception as exc:
             logger.error(f"获取存档列表失败: {exc}")
-            self.bridge.show_dialog.emit(
-                "读档失败", f"无法读取存档列表: {exc}"
-            )
+            self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
 
     def _on_save_selected(self, session_id):
         """选择存档后加载。"""
@@ -411,30 +564,37 @@ class WebMainWindow(QMainWindow):
             case_id, engine_state_dict = result
             case_data = db.load_case(case_id)
             if case_data is None:
-                self.bridge.show_dialog.emit(
-                    "读档失败", f"关联案件未找到: {case_id}"
-                )
+                self.bridge.show_dialog.emit("读档失败", f"关联案件未找到: {case_id}")
                 return
 
-            self.engine = InterrogationEngine.from_dict(
-                engine_state_dict, case_data
-            )
+            self.engine = InterrogationEngine.from_dict(engine_state_dict, case_data)
 
-            # 构建完整状态
+            self.bridge.clear_chat.emit()
+
             state = {
                 "suspects": [
                     {"name": s.name, "pressure": s.pressure}
                     for s in self.engine.suspects
                 ],
                 "evidences": case_data.get("evidences", []),
-                "time_left": self.engine.time_left,
+                "timeLeft": self.engine.time_left,
                 "current_suspect_index": self.engine.current_suspect_index,
                 "state": self.engine.state,
                 "case_id": case_id,
+                "caseTitle": case_data.get("title", ""),
             }
 
             self.bridge.init_game_state.emit(state)
             self.bridge.set_input_enabled.emit(True)
+
+            for suspect in self.engine.suspects:
+                for msg in suspect.memory:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        self.bridge.add_message.emit("player", content, "审讯员")
+                    elif role == "assistant":
+                        self.bridge.add_message.emit("suspect", content, suspect.name)
 
             if self.engine.state == "interrogating":
                 self._countdown_timer.start()

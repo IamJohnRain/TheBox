@@ -825,3 +825,159 @@
     letter-spacing: 0.05em;
     margin-top: var(--space-1);
 }
+
+
+/* ==========================================================================
+   Modal Form Styles (Settings / Generate Case)
+   ========================================================================== */
+
+.modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.form-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.form-label-hint {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-normal);
+    color: var(--color-text-muted);
+    text-transform: none;
+    letter-spacing: normal;
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-bg-card);
+    border: 1px solid rgba(0, 245, 255, 0.2);
+    border-radius: var(--layout-border-radius);
+    color: var(--color-text-primary);
+    font-size: var(--font-size-base);
+    font-family: var(--font-family);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    width: 100%;
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+    color: var(--color-text-muted);
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+    border-color: var(--color-accent-cyan);
+    box-shadow: 0 0 0 3px rgba(0, 245, 255, 0.1);
+    outline: none;
+}
+
+.form-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238892a0' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+    cursor: pointer;
+}
+
+.form-textarea {
+    resize: vertical;
+    min-height: 120px;
+    line-height: var(--line-height-relaxed);
+}
+
+.form-combo {
+    position: relative;
+}
+
+.form-combo-input {
+    padding-right: var(--space-4);
+}
+
+.form-result {
+    min-height: var(--space-6);
+}
+
+.form-result-pending {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.form-result-pending::before {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-bg-card);
+    border-top-color: var(--color-accent-cyan);
+    border-radius: 50%;
+    animation: spinner-rotate 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+.form-result-success {
+    font-size: var(--font-size-sm);
+    color: var(--color-success);
+}
+
+.form-result-error {
+    font-size: var(--font-size-sm);
+    color: var(--color-danger);
+}
+
+
+/* ==========================================================================
+   Typing Indicator
+   ========================================================================== */
+
+.typing-indicator .message-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+}
+
+.typing-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-accent-cyan);
+    animation: typing-bounce 1.4s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes typing-bounce {
+    0%, 60%, 100% {
+        transform: translateY(0);
+        opacity: 0.4;
+    }
+    30% {
+        transform: translateY(-8px);
+        opacity: 1;
+    }
+}

@@ -25,6 +25,10 @@ class WebBridge(QObject):
     generate_case_requested = Signal()
     cancel_requested = Signal()
     save_selected = Signal(str)
+    submit_settings_requested = Signal(str, str, str, str)
+    test_connection_requested = Signal(str, str, str)
+    submit_case_generation_requested = Signal(str, str)
+    cancel_case_generation_requested = Signal()
 
     # === Python → JS 信号 ===
     # 游戏状态
@@ -42,6 +46,9 @@ class WebBridge(QObject):
     hide_loading = Signal()
     update_loading_progress = Signal(int)  # elapsed_seconds
 
+    # Typing indicator
+    show_typing_indicator = Signal(bool)  # visible
+
     # 存档列表
     show_save_list = Signal(list)  # sessions
 
@@ -49,6 +56,17 @@ class WebBridge(QObject):
     show_ending_dialog = Signal(str, str)  # title, message
     restart_requested = Signal()
     return_to_menu_requested = Signal()
+
+    # 设置对话框
+    show_settings_modal = Signal(dict)  # settings_data
+    settings_test_result = Signal(bool, str)  # success, message
+    settings_saved = Signal()
+
+    # 案件生成对话框
+    show_generate_modal = Signal()
+    case_generation_progress = Signal(str)  # status_message
+    case_generation_complete = Signal(dict)  # case_data
+    case_generation_error = Signal(str)  # error_message
 
     # === JS → Python 槽 ===
 
@@ -116,3 +134,23 @@ class WebBridge(QObject):
     def requestReturnToMenu(self):
         """请求返回主菜单。"""
         self.return_to_menu_requested.emit()
+
+    @Slot(str, str, str, str)
+    def submitSettings(self, provider: str, api_key: str, base_url: str, model: str):
+        """提交设置表单。"""
+        self.submit_settings_requested.emit(provider, api_key, base_url, model)
+
+    @Slot(str, str, str)
+    def testConnection(self, api_key: str, base_url: str, model: str):
+        """测试 LLM 连接。"""
+        self.test_connection_requested.emit(api_key, base_url, model)
+
+    @Slot(str, str)
+    def submitCaseGeneration(self, background: str, model: str):
+        """提交案件生成请求。"""
+        self.submit_case_generation_requested.emit(background, model)
+
+    @Slot()
+    def cancelCaseGeneration(self):
+        """取消案件生成。"""
+        self.cancel_case_generation_requested.emit()

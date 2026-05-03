@@ -27,20 +27,20 @@ class EvidenceManager {
         /** @type {HTMLElement} 空状态提示 */
         this.emptyEl = document.getElementById('evidence-empty');
 
-        /** @type {Array.<{id: string, title: string, description: string, tag: string}>} 证据数据缓存 */
+        /** @type {Array.<{id: string, name: string, description: string, related_suspect: string}>} 证据数据缓存 */
         this.evidences = [];
     }
 
     /**
      * 加载证据列表。
      *
-     * @param {Array.<{id: string, title: string, description: string, tag?: string}>} evidences - 证据数据数组
+     * @param {Array.<{id: string, name: string, description: string, related_suspect?: string}>} evidences - 证据数据数组
      * @returns {void}
      *
      * @example
      * evidenceManager.loadEvidences([
-     *     { id: 'ev_001', title: '财务报表', description: '存在异常数据', tag: '物证' },
-     *     { id: 'ev_002', title: '监控录像', description: '案发当晚录像', tag: '视频' }
+     *     { id: 'ev_001', name: '财务报表', description: '存在异常数据', related_suspect: '张三' },
+     *     { id: 'ev_002', name: '监控录像', description: '案发当晚录像', related_suspect: '李四' }
      * ]);
      */
     loadEvidences(evidences) {
@@ -81,7 +81,7 @@ class EvidenceManager {
     /**
      * 渲染单个证据卡片到列表。
      * @private
-     * @param {{id: string, title: string, description: string, tag?: string, isNew?: boolean}} evidence - 证据数据
+     * @param {{id: string, name: string, description: string, related_suspect?: string, isNew?: boolean}} evidence - 证据数据
      */
     _addEvidenceCard(evidence) {
         if (!this.listEl) return;
@@ -108,9 +108,8 @@ class EvidenceManager {
                     <polyline points="10 9 9 9 8 9"/>
                 </svg>
             </div>
-            <h4 class="evidence-title">${this._escapeHtml(evidence.title || '未知证据')}</h4>
+            <h4 class="evidence-title">${this._escapeHtml(evidence.name || '未知证据')}</h4>
             <p class="evidence-description">${this._escapeHtml(evidence.description || '')}</p>
-            ${evidence.tag ? `<span class="evidence-tag">${this._escapeHtml(evidence.tag)}</span>` : ''}
         `;
 
         // 点击事件：弹出确认对话框
@@ -135,14 +134,14 @@ class EvidenceManager {
      * 证据卡片点击处理。
      * 弹出确认对话框，确认后调用 bridge.presentEvidence()。
      * @private
-     * @param {{id: string, title: string}} evidence - 证据数据
+     * @param {{id: string, name: string}} evidence - 证据数据
      */
     _onEvidenceClick(evidence) {
         // 使用 ModalManager 的确认对话框
         if (window.modalManager) {
             window.modalManager.showConfirm(
                 '出示证据',
-                `确定要出示「${evidence.title || '未知证据'}」吗？`,
+                `确定要出示「${evidence.name || '未知证据'}」吗？`,
                 () => {
                     if (window.bridge) {
                         window.bridge.presentEvidence(evidence.id);
@@ -151,7 +150,7 @@ class EvidenceManager {
             );
         } else {
             // 降级处理：直接 confirm
-            const confirmed = confirm(`确定要出示「${evidence.title || '未知证据'}」吗？`);
+            const confirmed = confirm(`确定要出示「${evidence.name || '未知证据'}」吗？`);
             if (confirmed && window.bridge) {
                 window.bridge.presentEvidence(evidence.id);
             }

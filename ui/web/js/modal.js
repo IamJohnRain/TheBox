@@ -1,68 +1,28 @@
 /**
  * @fileoverview 模态框模块。
- *
- * 管理各类模态框的显示和交互，包括信息对话框、确认对话框、
- * 存档选择对话框和结局对话框，支持 ESC 关闭和遮罩点击关闭。
- *
- * @author The Box Dev Team
  */
 
-/**
- * ModalManager - 模态框管理类。
- *
- * 负责：
- * - 显示信息对话框（showInfo）
- * - 显示确认对话框（showConfirm）
- * - 显示存档选择列表对话框（showSaveList）
- * - 显示结局对话框（showEndingDialog）
- * - ESC 键关闭
- * - 遮罩层点击关闭
- */
 class ModalManager {
-    /**
-     * 创建 ModalManager 实例。
-     */
     constructor() {
-        /** @type {HTMLElement} 遮罩层 */
         this.backdrop = document.getElementById('modal-backdrop');
-
-        /** @type {HTMLElement} 模态框主体 */
         this.modal = document.getElementById('modal');
-
-        /** @type {HTMLElement} 标题 */
         this.titleEl = document.getElementById('modal-title');
-
-        /** @type {HTMLElement} 内容区 */
         this.bodyEl = document.getElementById('modal-body');
-
-        /** @type {HTMLElement} 底部按钮区 */
         this.footerEl = document.getElementById('modal-footer');
-
-        /** @type {HTMLElement} 关闭按钮 */
         this.closeBtn = document.getElementById('modal-close');
-
-        /** @type {Function|null} 确认回调（用于确认对话框） */
         this._confirmCallback = null;
-
         this._bindEvents();
     }
 
-    /**
-     * 绑定事件监听器。
-     * @private
-     */
     _bindEvents() {
-        // 关闭按钮
         if (this.closeBtn) {
             this.closeBtn.addEventListener('click', () => this.hide());
         }
 
-        // 遮罩层点击关闭
         if (this.backdrop) {
             this.backdrop.addEventListener('click', () => this.hide());
         }
 
-        // ESC 键关闭
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this._isVisible()) {
                 this.hide();
@@ -70,44 +30,20 @@ class ModalManager {
         });
     }
 
-    /**
-     * 检查模态框是否可见。
-     * @private
-     * @returns {boolean}
-     */
     _isVisible() {
         return this.modal && this.modal.classList.contains('active');
     }
 
-    /**
-     * 显示信息对话框。
-     *
-     * @param {string} title - 对话框标题
-     * @param {string} message - 对话框消息内容
-     * @returns {void}
-     *
-     * @example
-     * modalManager.showInfo('提示', '案件已生成完毕');
-     */
+    isVisible() {
+        return this._isVisible();
+    }
+
     showInfo(title, message) {
         this._show(title, `<p>${this._escapeHtml(message)}</p>`, [
             { text: '确定', class: 'modal-btn-primary', callback: null },
         ]);
     }
 
-    /**
-     * 显示确认对话框。
-     *
-     * @param {string} title - 对话框标题
-     * @param {string} message - 对话框消息内容
-     * @param {Function} onConfirm - 确认回调函数
-     * @returns {void}
-     *
-     * @example
-     * modalManager.showConfirm('确认', '确定要退出吗？', () => {
-     *     console.log('已确认');
-     * });
-     */
     showConfirm(title, message, onConfirm) {
         this._confirmCallback = onConfirm;
         this._show(title, `<p>${this._escapeHtml(message)}</p>`, [
@@ -121,18 +57,6 @@ class ModalManager {
         ]);
     }
 
-    /**
-     * 显示存档选择对话框。
-     *
-     * @param {Array.<{session_id: string, name: string, date: string, summary: string}>} sessions - 存档列表
-     * @returns {void}
-     *
-     * @example
-     * modalManager.showSaveList([
-     *     { session_id: 's1', name: '存档1', date: '2024-01-01', summary: '第一案' },
-     *     { session_id: 's2', name: '存档2', date: '2024-01-02', summary: '第二案' }
-     * ]);
-     */
     showSaveList(sessions) {
         const sessionsList = sessions || [];
 
@@ -146,8 +70,8 @@ class ModalManager {
         let listHtml = '<div class="save-list">';
         sessionsList.forEach((session) => {
             listHtml += `
-                <div class="save-item" data-session-id="${this._escapeHtml(session.session_id || '')}" 
-                     tabindex="0" role="button" 
+                <div class="save-item" data-session-id="${this._escapeHtml(session.session_id || '')}"
+                     tabindex="0" role="button"
                      aria-label="加载存档 ${this._escapeHtml(session.name || '未命名')}">
                     <div class="save-item-info">
                         <h4 class="save-item-name">${this._escapeHtml(session.name || '未命名存档')}</h4>
@@ -163,7 +87,6 @@ class ModalManager {
             { text: '取消', class: 'modal-btn-secondary', callback: null },
         ]);
 
-        // 绑定存档项点击事件
         const saveItems = this.bodyEl.querySelectorAll('.save-item');
         saveItems.forEach((item) => {
             const clickHandler = () => {
@@ -181,16 +104,6 @@ class ModalManager {
         });
     }
 
-    /**
-     * 显示结局对话框。
-     *
-     * @param {string} title - 对话框标题
-     * @param {string} message - 结局描述消息
-     * @returns {void}
-     *
-     * @example
-     * modalManager.showEndingDialog('审讯结束', '你成功揭开了真相！');
-     */
     showEndingDialog(title, message) {
         this._show(title, `<p>${this._escapeHtml(message)}</p>`, [
             {
@@ -210,39 +123,280 @@ class ModalManager {
         ]);
     }
 
-    /**
-     * 隐藏模态框。
-     */
+    // ================================================================
+    // Settings Modal
+    // ================================================================
+
+    showSettings(data) {
+        const settings = data || {};
+        const providers = settings.providers || [];
+        const models = settings.models || [];
+        const currentProvider = settings.provider || '';
+        const currentApiKey = settings.api_key || '';
+        const currentBaseUrl = settings.base_url || '';
+        const currentModel = settings.model || '';
+
+        let providerOptions = '';
+        providers.forEach((p) => {
+            const selected = p.id === currentProvider ? ' selected' : '';
+            providerOptions += `<option value="${this._escapeHtml(p.id)}"${selected}>${this._escapeHtml(p.name)}</option>`;
+        });
+
+        let modelOptions = '';
+        models.forEach((m) => {
+            const selected = m === currentModel ? ' selected' : '';
+            modelOptions += `<option value="${this._escapeHtml(m)}"${selected}>${this._escapeHtml(m)}</option>`;
+        });
+
+        const isCustomModel = currentModel && models.indexOf(currentModel) === -1;
+
+        const bodyHtml = `
+            <div class="modal-form">
+                <div class="form-group">
+                    <label class="form-label" for="settings-provider">Provider</label>
+                    <select class="form-select" id="settings-provider">
+                        ${providerOptions}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="settings-api-key">API Key</label>
+                    <input type="password" class="form-input" id="settings-api-key"
+                           value="${this._escapeHtml(currentApiKey)}" placeholder="输入 API Key">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="settings-base-url">Base URL</label>
+                    <input type="text" class="form-input" id="settings-base-url"
+                           value="${this._escapeHtml(currentBaseUrl)}" placeholder="https://api.example.com/v1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="settings-model">模型</label>
+                    <div class="form-combo">
+                        <input type="text" class="form-input form-combo-input" id="settings-model"
+                               value="${this._escapeHtml(currentModel)}" placeholder="输入或选择模型名称"
+                               list="settings-model-list">
+                        <datalist id="settings-model-list">
+                            ${modelOptions}
+                        </datalist>
+                    </div>
+                </div>
+                <div class="form-result" id="settings-test-result"></div>
+            </div>
+        `;
+
+        this._show('LLM 设置', bodyHtml, [
+            { text: '测试连接', class: 'modal-btn-secondary', callback: () => {
+                this._onTestConnection();
+                return false;
+            }},
+            { text: '保存', class: 'modal-btn-primary', callback: () => {
+                this._onSaveSettings();
+            }},
+            { text: '取消', class: 'modal-btn-secondary', callback: null },
+        ]);
+
+        this._setupSettingsProviderChange(providers);
+    }
+
+    _setupSettingsProviderChange(providers) {
+        const providerSelect = document.getElementById('settings-provider');
+        if (!providerSelect) return;
+
+        providerSelect.addEventListener('change', () => {
+            const providerId = providerSelect.value;
+            const provider = providers.find((p) => p.id === providerId);
+            if (!provider) return;
+
+            const baseUrlInput = document.getElementById('settings-base-url');
+            const modelInput = document.getElementById('settings-model');
+            const modelList = document.getElementById('settings-model-list');
+            const apiKeyInput = document.getElementById('settings-api-key');
+
+            if (provider.default_base_url && baseUrlInput) {
+                baseUrlInput.value = provider.default_base_url || '';
+            }
+
+            if (modelList) {
+                modelList.innerHTML = '';
+                if (provider.models) {
+                    provider.models.forEach((m) => {
+                        const opt = document.createElement('option');
+                        opt.value = m;
+                        modelList.appendChild(opt);
+                    });
+                }
+            }
+
+            if (provider.default_model && modelInput) {
+                modelInput.value = provider.default_model || '';
+            }
+
+            if (apiKeyInput) {
+                apiKeyInput.value = '';
+                apiKeyInput.placeholder = '输入 API Key';
+            }
+
+            const resultEl = document.getElementById('settings-test-result');
+            if (resultEl) resultEl.innerHTML = '';
+        });
+    }
+
+    _onTestConnection() {
+        const apiKey = document.getElementById('settings-api-key')?.value?.trim() || '';
+        const baseUrl = document.getElementById('settings-base-url')?.value?.trim() || '';
+        const model = document.getElementById('settings-model')?.value?.trim() || '';
+
+        const resultEl = document.getElementById('settings-test-result');
+        if (resultEl) {
+            resultEl.innerHTML = '<span class="form-result-pending">正在测试连接...</span>';
+        }
+
+        if (window.bridge) {
+            window.bridge.testConnection(apiKey, baseUrl, model);
+        }
+    }
+
+    _onSaveSettings() {
+        const provider = document.getElementById('settings-provider')?.value?.trim() || '';
+        const apiKey = document.getElementById('settings-api-key')?.value?.trim() || '';
+        const baseUrl = document.getElementById('settings-base-url')?.value?.trim() || '';
+        const model = document.getElementById('settings-model')?.value?.trim() || '';
+
+        if (!apiKey || !baseUrl || !model) {
+            const resultEl = document.getElementById('settings-test-result');
+            if (resultEl) {
+                resultEl.innerHTML = '<span class="form-result-error">API Key、Base URL 和模型名称不能为空</span>';
+            }
+            return;
+        }
+
+        if (window.bridge) {
+            window.bridge.submitSettings(provider, apiKey, baseUrl, model);
+        }
+    }
+
+    updateTestResult(success, message) {
+        const resultEl = document.getElementById('settings-test-result');
+        if (resultEl) {
+            const cls = success ? 'form-result-success' : 'form-result-error';
+            resultEl.innerHTML = `<span class="${cls}">${this._escapeHtml(message)}</span>`;
+        }
+    }
+
+    // ================================================================
+    // Case Generation Modal
+    // ================================================================
+
+    showGenerateCase() {
+        const bodyHtml = `
+            <div class="modal-form">
+                <div class="form-group">
+                    <label class="form-label" for="generate-story">背景故事</label>
+                    <textarea class="form-textarea" id="generate-story" rows="6"
+                              placeholder="请输入案件的背景故事..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="generate-model">模型名称 <span class="form-label-hint">(可选，留空使用当前设置)</span></label>
+                    <input type="text" class="form-input" id="generate-model"
+                           placeholder="留空使用默认模型">
+                </div>
+                <div class="form-result" id="generate-result"></div>
+            </div>
+        `;
+
+        this._show('生成新案件', bodyHtml, [
+            { text: '生成', class: 'modal-btn-primary', callback: () => {
+                this._onGenerateCase();
+                return false;
+            }},
+            { text: '取消', class: 'modal-btn-secondary', callback: null },
+        ]);
+    }
+
+    _onGenerateCase() {
+        const story = document.getElementById('generate-story')?.value?.trim() || '';
+        const model = document.getElementById('generate-model')?.value?.trim() || '';
+
+        const resultEl = document.getElementById('generate-result');
+        if (!story) {
+            if (resultEl) {
+                resultEl.innerHTML = '<span class="form-result-error">背景故事不能为空</span>';
+            }
+            return;
+        }
+
+        if (resultEl) {
+            resultEl.innerHTML = '<span class="form-result-pending">正在生成案件，请耐心等待...</span>';
+        }
+
+        const generateBtn = this.footerEl?.querySelector('.modal-btn-primary');
+        if (generateBtn) {
+            generateBtn.disabled = true;
+            generateBtn.textContent = '生成中...';
+        }
+
+        const storyEl = document.getElementById('generate-story');
+        const modelEl = document.getElementById('generate-model');
+        if (storyEl) storyEl.disabled = true;
+        if (modelEl) modelEl.disabled = true;
+
+        if (window.bridge) {
+            window.bridge.submitCaseGeneration(story, model);
+        }
+    }
+
+    updateGenerationProgress(message) {
+        const resultEl = document.getElementById('generate-result');
+        if (resultEl) {
+            resultEl.innerHTML = `<span class="form-result-pending">${this._escapeHtml(message)}</span>`;
+        }
+    }
+
+    updateGenerationError(errorMessage) {
+        const resultEl = document.getElementById('generate-result');
+        if (resultEl) {
+            resultEl.innerHTML = `<span class="form-result-error">${this._escapeHtml(errorMessage)}</span>`;
+        }
+
+        const generateBtn = this.footerEl?.querySelector('.modal-btn-primary');
+        if (generateBtn) {
+            generateBtn.disabled = false;
+            generateBtn.textContent = '生成';
+        }
+
+        const storyEl = document.getElementById('generate-story');
+        const modelEl = document.getElementById('generate-model');
+        if (storyEl) storyEl.disabled = false;
+        if (modelEl) modelEl.disabled = false;
+    }
+
+    updateGenerationComplete() {
+        this.hide();
+    }
+
+    // ================================================================
+    // Core
+    // ================================================================
+
     hide() {
         if (this.backdrop) this.backdrop.classList.remove('active');
         if (this.modal) this.modal.classList.remove('active');
         this._confirmCallback = null;
     }
 
-    /**
-     * 显示模态框（内部方法）。
-     * @private
-     * @param {string} title - 标题
-     * @param {string} bodyHtml - 内容 HTML
-     * @param {Array.<{text: string, class: string, callback: Function|null}>} buttons - 按钮配置
-     */
     _show(title, bodyHtml, buttons) {
         if (!this.modal || !this.backdrop) {
             console.error('[ModalManager] Modal elements not found');
             return;
         }
 
-        // 设置标题
         if (this.titleEl) {
             this.titleEl.textContent = title;
         }
 
-        // 设置内容
         if (this.bodyEl) {
             this.bodyEl.innerHTML = bodyHtml;
         }
 
-        // 设置按钮
         if (this.footerEl) {
             this.footerEl.innerHTML = '';
             buttons.forEach((btn) => {
@@ -250,26 +404,19 @@ class ModalManager {
                 buttonEl.className = `modal-btn ${btn.class || 'modal-btn-secondary'}`;
                 buttonEl.textContent = btn.text;
                 buttonEl.addEventListener('click', () => {
-                    if (typeof btn.callback === 'function') {
-                        btn.callback();
+                    const result = typeof btn.callback === 'function' ? btn.callback() : undefined;
+                    if (result !== false) {
+                        this.hide();
                     }
-                    this.hide();
                 });
                 this.footerEl.appendChild(buttonEl);
             });
         }
 
-        // 显示模态框
         this.backdrop.classList.add('active');
         this.modal.classList.add('active');
     }
 
-    /**
-     * HTML 转义，防止 XSS。
-     * @private
-     * @param {string} text - 原始文本
-     * @returns {string} 转义后的安全文本
-     */
     _escapeHtml(text) {
         if (!text) return '';
         const div = document.createElement('div');
