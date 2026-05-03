@@ -106,6 +106,10 @@ class SuspectAgent:
         self._append_memory(player_input, result["reply"])
         self.truncate_memory()
 
+        logger.debug(
+            f"嫌疑人[{self.name}]回复: {result['reply'][:100]}, pressure_change={result['pressure_change']}"
+        )
+
         return result
 
     def _postprocess(self, result: dict) -> None:

@@ -48,6 +48,12 @@ class ChatManager {
         const messageEl = document.createElement('div');
         messageEl.className = `message message-${role}`;
 
+        // 标记消息归属嫌疑人
+        const owner = role === 'player'
+            ? (this._currentSuspect || '_default')
+            : (suspectName || '_default');
+        messageEl.setAttribute('data-suspect', owner);
+
         if (role === 'system') {
             messageEl.innerHTML = `
                 <div class="message-content">${this._escapeHtml(content)}</div>
@@ -71,26 +77,48 @@ class ChatManager {
 
         if (!this.container) return;
 
-        this.container.innerHTML = '';
+        // 隐藏所有消息（不销毁 DOM）
+        this.container.querySelectorAll('.message').forEach(el => {
+            el.classList.add('msg-hidden');
+        });
 
-        const defaultMsgs = this._messagesBySuspect['_default'] || [];
-        for (const msg of defaultMsgs) {
-            if (msg.role === 'system') {
-                this._renderMessage(msg.role, msg.content, msg.suspectName, msg.time);
-            }
-        }
+        // 显示当前嫌疑人和默认消息
+        const escapedName = CSS.escape(suspectName || '');
+        this.container.querySelectorAll(
+            `.message[data-suspect="${escapedName}"], .message[data-suspect="_default"]`
+        ).forEach(el => {
+            el.classList.remove('msg-hidden');
+            // 已有消息不播放动画
+            el.classList.add('no-animation');
+        });
 
+        // 处理占位符
         const msgs = this._messagesBySuspect[suspectName] || [];
-        for (const msg of msgs) {
-            this._renderMessage(msg.role, msg.content, msg.suspectName, msg.time);
+        const defaultMsgs = this._messagesBySuspect['_default'] || [];
+        if (msgs.length === 0 && defaultMsgs.length === 0) {
+            this._showPlaceholder(suspectName);
+        } else {
+            this._hidePlaceholder();
         }
 
-        if (msgs.length === 0 && defaultMsgs.length === 0) {
-            const placeholder = document.createElement('div');
-            placeholder.className = 'message message-system';
+        this._scrollToBottom();
+    }
+
+    _showPlaceholder(suspectName) {
+        let placeholder = this.container.querySelector('.chat-placeholder');
+        if (!placeholder) {
+            placeholder = document.createElement('div');
+            placeholder.className = 'message message-system chat-placeholder';
+            placeholder.setAttribute('data-suspect', '_placeholder');
             placeholder.innerHTML = `<div class="message-content">与 ${this._escapeHtml(suspectName || '嫌疑人')} 的对话将在这里显示...</div>`;
             this.container.appendChild(placeholder);
         }
+        placeholder.classList.remove('msg-hidden');
+    }
+
+    _hidePlaceholder() {
+        const placeholder = this.container.querySelector('.chat-placeholder');
+        if (placeholder) placeholder.classList.add('msg-hidden');
     }
 
     showTypingIndicator() {
@@ -122,13 +150,14 @@ class ChatManager {
 
     clear() {
         if (!this.container) return;
-        this.container.innerHTML = '';
+        this.container.innerHTML = '';  // clear 时可以安全清空，因为是从零开始
         this._typingEl = null;
         this._messagesBySuspect = {};
         this._currentSuspect = null;
 
         const placeholder = document.createElement('div');
-        placeholder.className = 'message message-system';
+        placeholder.className = 'message message-system chat-placeholder';
+        placeholder.setAttribute('data-suspect', '_placeholder');
         placeholder.innerHTML = '<div class="message-content">选择嫌疑人开始审讯...</div>';
         this.container.appendChild(placeholder);
     }

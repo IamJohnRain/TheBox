@@ -69,7 +69,7 @@
             const state = data.state;
 
             if (state.suspects) {
-                suspectManager.loadSuspects(state.suspects);
+                suspectManager.loadSuspects(state.suspects);  // loadSuspects 内部已自动选中第一个
             }
 
             if (state.evidences) {
@@ -91,6 +91,7 @@
                 chatManager.setTitle(state.caseTitle);
             }
 
+            // loadSuspects 已自动 selectSuspect(0)，这里只需切换聊天上下文
             const idx = state.current_suspect_index || 0;
             if (state.suspects && state.suspects[idx]) {
                 chatManager.switchSuspect(state.suspects[idx].name);
@@ -196,6 +197,37 @@
         bridge.on('caseGenerationError', (data) => {
             if (!data) return;
             modalManager.updateGenerationError(data.errorMessage);
+        });
+
+        // 游戏交互控制
+        bridge.on('gameInteractive', (data) => {
+            if (!data) return;
+            const enabled = data.enabled;
+
+            // 聊天输入框
+            chatManager.setInputEnabled(enabled);
+
+            // 嫌疑人下拉框
+            const selector = document.getElementById('suspect-selector');
+            if (selector) selector.disabled = !enabled;
+
+            // 施压/共情按钮
+            const btnPressure = document.getElementById('btn-pressure');
+            const btnEmpathy = document.getElementById('btn-empathy');
+            if (btnPressure) btnPressure.disabled = !enabled;
+            if (btnEmpathy) btnEmpathy.disabled = !enabled;
+
+            // 证据卡片
+            document.querySelectorAll('.evidence-card').forEach((card) => {
+                card.style.pointerEvents = enabled ? '' : 'none';
+                card.style.opacity = enabled ? '' : '0.5';
+            });
+        });
+
+        // 复盘报告展示
+        bridge.on('showReview', (data) => {
+            if (!data || !data.data) return;
+            modalManager.showReviewReport(data.data);
         });
     }
 

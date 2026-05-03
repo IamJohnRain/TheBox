@@ -86,9 +86,13 @@ class SuspectManager {
             this.selector.appendChild(option);
         });
 
-        // 重置当前状态
-        this.currentIndex = -1;
-        this._resetDisplay();
+        // 自动选中第一个嫌疑人
+        if (this.suspects.length > 0) {
+            this.selectSuspect(0);
+        } else {
+            this.currentIndex = -1;
+            this._resetDisplay();
+        }
     }
 
     /**

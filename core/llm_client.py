@@ -59,6 +59,10 @@ class LLMClient:
     ) -> str:
         if not self._initialized:
             raise ConfigError("LLMClient 未初始化，请先设置 API Key 并调用 initialize()")
+
+        logger.debug(f"API请求: model={self.model}, messages_count={len(messages)}")
+
+        start_time = time.time()
         for attempt in range(self.max_retries + 1):
             try:
                 kwargs = {
@@ -72,6 +76,16 @@ class LLMClient:
 
                 response = self.client.chat.completions.create(**kwargs)
                 content = response.choices[0].message.content
+
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                usage = response.usage
+                tokens_info = (
+                    f"prompt={usage.prompt_tokens}, completion={usage.completion_tokens}"
+                    if usage
+                    else "N/A"
+                )
+                logger.debug(f"API响应: model={self.model}, latency={elapsed_ms}ms, tokens={tokens_info}")
+
                 if not content:
                     raise LLMResponseError("LLM 返回 content 为 None")
                 return content

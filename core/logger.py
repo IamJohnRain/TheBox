@@ -23,7 +23,9 @@ def setup_logger(level=logging.INFO):
         logger.addHandler(file_handler)
 
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        console_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+        )
         logger.addHandler(console_handler)
 
     return logger

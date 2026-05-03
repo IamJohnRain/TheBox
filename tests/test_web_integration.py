@@ -727,7 +727,7 @@ class TestWebMainWindowSaveLoad:
         """选择存档但关联案件不存在时显示错误。"""
         with patch(
             "core.db.load_full_session",
-            return_value=("case_missing", {"state": "test"}),
+            return_value=("case_missing", {"state": "test", "case_title": "测试"}),
         ), patch("core.db.load_case", return_value=None):
             dialogs = []
             loaded_window.bridge.show_dialog.connect(
@@ -738,7 +738,7 @@ class TestWebMainWindowSaveLoad:
             qtbot.wait(100)
 
             assert len(dialogs) > 0
-            assert "读档失败" in dialogs[0]["title"]
+            assert "读档" in dialogs[0]["title"]
 
 
 # ─── 结局处理测试 ───
@@ -795,16 +795,16 @@ class TestWebMainWindowEnding:
         assert not loaded_window._countdown_timer.isActive()
 
     def test_ending_disables_input(self, qtbot, loaded_window):
-        """结局处理禁用输入。"""
-        input_states = []
-        loaded_window.bridge.set_input_enabled.connect(
-            lambda e: input_states.append(e)
+        """结局处理禁用所有交互。"""
+        interactive_states = []
+        loaded_window.bridge.set_game_interactive.connect(
+            lambda e: interactive_states.append(e)
         )
 
         loaded_window._handle_ending({"new_state": "breakdown"})
         qtbot.wait(50)
 
-        assert False in input_states
+        assert False in interactive_states
 
     def test_breakdown_message_contains_confession(self, qtbot, loaded_window):
         """崩溃结局消息包含认罪内容。"""
@@ -896,16 +896,16 @@ class TestWebMainWindowRestart:
         assert True in clear_called
 
     def test_return_to_menu_disables_input(self, qtbot, loaded_window):
-        """返回主菜单禁用输入。"""
-        input_states = []
-        loaded_window.bridge.set_input_enabled.connect(
-            lambda e: input_states.append(e)
+        """返回主菜单禁用所有交互。"""
+        interactive_states = []
+        loaded_window.bridge.set_game_interactive.connect(
+            lambda e: interactive_states.append(e)
         )
 
         loaded_window._return_to_menu()
         qtbot.wait(50)
 
-        assert False in input_states
+        assert False in interactive_states
 
     def test_return_to_menu_stops_countdown(self, loaded_window):
         """返回主菜单停止倒计时。"""

@@ -150,6 +150,14 @@ class WebBridge {
             this._trigger('caseGenerationError', { errorMessage });
         });
 
+        this.pythonBridge.set_game_interactive.connect((enabled) => {
+            this._trigger('gameInteractive', { enabled });
+        });
+
+        this.pythonBridge.show_review.connect((data) => {
+            this._trigger('showReview', { data });
+        });
+
         console.log('[WebBridge] Signal listeners setup complete');
     }
 
@@ -288,6 +296,12 @@ class WebBridge {
     cancelCaseGeneration() {
         if (this.pythonBridge) {
             this.pythonBridge.cancelCaseGeneration();
+        }
+    }
+
+    requestReview() {
+        if (this.pythonBridge) {
+            this.pythonBridge.requestReview();
         }
     }
 }

@@ -107,6 +107,66 @@ class ModalManager {
     showEndingDialog(title, message) {
         this._show(title, `<p>${this._escapeHtml(message)}</p>`, [
             {
+                text: '复盘审讯',
+                class: 'modal-btn-primary',
+                callback: () => {
+                    if (window.bridge) window.bridge.requestReview();
+                },
+            },
+            {
+                text: '重新开始',
+                class: 'modal-btn-secondary',
+                callback: () => {
+                    if (window.bridge) window.bridge.requestRestart();
+                },
+            },
+            {
+                text: '返回主菜单',
+                class: 'modal-btn-secondary',
+                callback: () => {
+                    if (window.bridge) window.bridge.requestReturnToMenu();
+                },
+            },
+        ]);
+    }
+
+    showReviewReport(reviewData) {
+        const score = reviewData.score || 0;
+        const scoreClass = score >= 70 ? 'success' : score >= 40 ? 'warning' : 'failure';
+        const scoreIcon = score >= 70 ? '✓' : score >= 40 ? '!' : '✗';
+
+        let momentsHtml = '';
+        (reviewData.key_moments || []).forEach((m) => {
+            momentsHtml += `<li>${this._escapeHtml(m)}</li>`;
+        });
+
+        let suggestionsHtml = '';
+        (reviewData.suggestions || []).forEach((s) => {
+            suggestionsHtml += `<li>${this._escapeHtml(s)}</li>`;
+        });
+
+        const bodyHtml = `
+            <div class="result-modal">
+                <div class="result-icon ${scoreClass}">${scoreIcon}</div>
+                <div class="result-title ${scoreClass}">综合评分: ${score}/100</div>
+                <div class="result-description">${this._escapeHtml(reviewData.verdict || '')}</div>
+                <div style="text-align:left; margin: var(--space-4) 0;">
+                    <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">策略分析</h4>
+                    <p>${this._escapeHtml(reviewData.strategy_analysis || '')}</p>
+                </div>
+                <div style="text-align:left; margin: var(--space-4) 0;">
+                    <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">关键转折</h4>
+                    <ul style="padding-left: var(--space-6);">${momentsHtml || '<li>无</li>'}</ul>
+                </div>
+                <div style="text-align:left; margin: var(--space-4) 0;">
+                    <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">改进建议</h4>
+                    <ul style="padding-left: var(--space-6);">${suggestionsHtml || '<li>无</li>'}</ul>
+                </div>
+            </div>
+        `;
+
+        this._show('审讯复盘', bodyHtml, [
+            {
                 text: '重新开始',
                 class: 'modal-btn-primary',
                 callback: () => {

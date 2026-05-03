@@ -52,10 +52,17 @@ class WebBridge(QObject):
     # 存档列表
     show_save_list = Signal(list)  # sessions
 
+    # 游戏交互控制
+    set_game_interactive = Signal(bool)  # 控制所有游戏操作
+
     # 结局对话框
     show_ending_dialog = Signal(str, str)  # title, message
     restart_requested = Signal()
     return_to_menu_requested = Signal()
+
+    # 复盘相关
+    review_requested = Signal()
+    show_review = Signal(dict)  # review_data
 
     # 设置对话框
     show_settings_modal = Signal(dict)  # settings_data
@@ -154,3 +161,8 @@ class WebBridge(QObject):
     def cancelCaseGeneration(self):
         """取消案件生成。"""
         self.cancel_case_generation_requested.emit()
+
+    @Slot()
+    def requestReview(self):
+        """请求复盘报告。"""
+        self.review_requested.emit()

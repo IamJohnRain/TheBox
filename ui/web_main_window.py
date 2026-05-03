@@ -124,6 +124,32 @@ class CaseGenerateWorker(QThread):
                 self.error.emit(str(exc))
 
 
+class ReviewWorker(QThread):
+    """后台线程 Worker，生成审讯复盘报告。"""
+
+    finished = Signal(dict)
+    error = Signal(str)
+
+    def __init__(self, engine):
+        super().__init__()
+        # 保存引擎状态快照，避免线程安全问题
+        self._engine_state = engine.to_dict()
+        self._case_data = engine.case
+
+    def run(self):
+        try:
+            from core.review_generator import generate_review
+
+            result = generate_review(self._engine_state, self._case_data)
+            if result:
+                self.finished.emit(result)
+            else:
+                self.error.emit("复盘报告生成失败")
+        except Exception as exc:
+            logger.error(f"复盘生成失败: {exc}")
+            self.error.emit(str(exc))
+
+
 class WebMainWindow(QMainWindow):
     """基于 WebView 的主窗口。"""
 
@@ -136,6 +162,7 @@ class WebMainWindow(QMainWindow):
         self._current_worker: Optional[WebWorker] = None
         self._test_worker: Optional[TestConnectionWorker] = None
         self._case_gen_worker: Optional[CaseGenerateWorker] = None
+        self._review_worker: Optional[ReviewWorker] = None
 
         self.web_view = QWebEngineView()
 
@@ -181,10 +208,21 @@ class WebMainWindow(QMainWindow):
         self.bridge.cancel_case_generation_requested.connect(
             self._on_cancel_case_generation
         )
+        self.bridge.review_requested.connect(self._on_review_requested)
 
     def load_case(self, case_data):
         """加载案件到引擎并更新 UI。"""
+        # 确保 case_data 有 case_id
+        if "case_id" not in case_data or not case_data["case_id"]:
+            case_data["case_id"] = str(uuid.uuid4())
+
         self.engine = InterrogationEngine(case_data)
+
+        # 确保案件数据入库
+        try:
+            db.save_case(case_data)
+        except Exception as exc:
+            logger.warning(f"案件数据入库失败（不影响游戏）: {exc}")
 
         state = {
             "suspects": [
@@ -201,12 +239,14 @@ class WebMainWindow(QMainWindow):
 
         self.bridge.init_game_state.emit(state)
         self.bridge.set_input_enabled.emit(True)
+        self.bridge.set_game_interactive.emit(True)
 
         if self.engine.suspects:
             self._on_suspect_changed(0)
 
     def _on_suspect_changed(self, index):
         """处理嫌疑人切换。"""
+        logger.debug(f"切换嫌疑人: index={index}")
         if self.engine is None or index < 0:
             return
 
@@ -218,24 +258,38 @@ class WebMainWindow(QMainWindow):
 
     def _on_chat_message_sent(self, text):
         """处理用户发送的聊天消息。"""
+        logger.debug(f"用户发送消息: {text[:50]}")
         if self.engine is None:
             return
         self._start_worker("chat", text)
 
     def _on_pressure(self):
         """处理施压操作。"""
+        suspect_name = (
+            self.engine.suspects[self.engine.current_suspect_index].name
+            if self.engine
+            else "N/A"
+        )
+        logger.debug(f"用户施压，当前嫌疑人: {suspect_name}")
         if self.engine is None:
             return
         self._start_worker("pressure", "对嫌疑人施压")
 
     def _on_empathy(self):
         """处理共情操作。"""
+        suspect_name = (
+            self.engine.suspects[self.engine.current_suspect_index].name
+            if self.engine
+            else "N/A"
+        )
+        logger.debug(f"用户共情，当前嫌疑人: {suspect_name}")
         if self.engine is None:
             return
         self._start_worker("empathy", "对嫌疑人表示共情")
 
     def _on_evidence_selected(self, evidence_id):
         """处理证据出示。"""
+        logger.debug(f"用户出示证据: {evidence_id}")
         if self.engine is None:
             return
 
@@ -271,7 +325,9 @@ class WebMainWindow(QMainWindow):
     def _on_worker_finished(self, events):
         """Worker 完成，处理事件。"""
         self.update_ui_from_engine(events)
-        self.bridge.set_input_enabled.emit(True)
+        # 只有在引擎仍处于可交互状态时才启用输入
+        if self.engine and self.engine.state not in ("breakdown", "verdict"):
+            self.bridge.set_input_enabled.emit(True)
         self.bridge.show_typing_indicator.emit(False)
         self._current_worker = None
 
@@ -346,7 +402,7 @@ class WebMainWindow(QMainWindow):
     def _handle_ending(self, state_event):
         """处理游戏结局。"""
         self._countdown_timer.stop()
-        self.bridge.set_input_enabled.emit(False)
+        self.bridge.set_game_interactive.emit(False)  # 禁用所有操作
 
         new_state = state_event["new_state"]
         if new_state == "breakdown":
@@ -369,8 +425,51 @@ class WebMainWindow(QMainWindow):
         """返回主菜单。"""
         self.engine = None
         self.bridge.clear_chat.emit()
-        self.bridge.set_input_enabled.emit(False)
+        self.bridge.set_game_interactive.emit(False)  # 禁用所有操作
         self._countdown_timer.stop()
+
+        # 重置嫌疑人面板
+        self.bridge.init_game_state.emit(
+            {
+                "suspects": [],
+                "evidences": [],
+                "timeLeft": 0,
+                "current_suspect_index": 0,
+                "state": "selecting",
+                "case_id": "",
+                "caseTitle": "",
+            }
+        )
+
+    # ================================================================
+    # Review
+    # ================================================================
+
+    def _on_review_requested(self):
+        """生成审讯复盘报告。"""
+        if self.engine is None:
+            return
+        if self._review_worker and self._review_worker.isRunning():
+            return
+
+        self._review_worker = ReviewWorker(self.engine)
+        self._review_worker.finished.connect(self._on_review_ready)
+        self._review_worker.error.connect(self._on_review_error)
+        self._review_worker.start()
+
+        self.bridge.show_loading.emit("正在生成审讯复盘报告...", False)
+
+    def _on_review_ready(self, review_data):
+        """复盘报告生成成功。"""
+        self._review_worker = None
+        self.bridge.hide_loading.emit()
+        self.bridge.show_review.emit(review_data)
+
+    def _on_review_error(self, error_msg):
+        """复盘报告生成失败。"""
+        self._review_worker = None
+        self.bridge.hide_loading.emit()
+        self.bridge.show_dialog.emit("复盘失败", f"生成复盘报告失败: {error_msg}")
 
     # ================================================================
     # Settings - WebView Modal
@@ -459,6 +558,7 @@ class WebMainWindow(QMainWindow):
 
     def _on_generate_case(self):
         """显示案件生成模态框。"""
+        logger.info("请求生成新案件")
         self.bridge.show_generate_modal.emit()
 
     def _on_submit_case_generation(self, background, model):
@@ -480,9 +580,11 @@ class WebMainWindow(QMainWindow):
 
     def _on_case_generated(self, case_dict):
         """案件生成成功。"""
+        logger.info(f"案件生成成功: {case_dict.get('title', '未知')}")
         self.bridge.case_generation_complete.emit(case_dict)
         self._case_gen_worker = None
-        self.load_case(case_dict)
+        # 延迟加载案件，等 modal 关闭动画完成
+        QTimer.singleShot(350, lambda: self.load_case(case_dict))
 
     def _on_case_generation_error(self, error_msg):
         """案件生成失败。"""
@@ -512,8 +614,13 @@ class WebMainWindow(QMainWindow):
             session_id = str(uuid.uuid4())
             case_id = self.engine.case.get("case_id", "unknown")
             case_title = self.engine.case.get("title", "未知案件")
+
+            # 确保案件数据在数据库中是最新的
+            db.save_case(self.engine.case)
+
             engine_state_dict = self.engine.to_dict()
             db.save_full_session(session_id, case_id, engine_state_dict)
+            logger.info(f"存档成功: session_id={session_id}, case={case_title}")
 
             from datetime import datetime as dt
             now_str = dt.now().strftime("%Y-%m-%d %H:%M")
@@ -526,13 +633,23 @@ class WebMainWindow(QMainWindow):
 
     def _on_load_game(self):
         """读档 - 显示存档列表。"""
+        logger.info("请求读档列表")
         try:
             sessions = db.list_sessions()
             formatted_sessions = []
             for s in sessions:
                 case_id = s.get("case_id", "")
                 case_data = db.load_case(case_id)
-                case_title = case_data.get("title", "未知案件") if case_data else "未知案件"
+                if case_data:
+                    case_title = case_data.get("title", "未知案件")
+                else:
+                    # 降级：尝试从 session 的 engine_state 中提取 case_title
+                    result = db.load_full_session(s["session_id"])
+                    if result:
+                        _, engine_state = result
+                        case_title = engine_state.get("case_title", "未知案件")
+                    else:
+                        case_title = "未知案件"
 
                 saved_at = s.get("saved_at", "")
                 try:
@@ -555,6 +672,7 @@ class WebMainWindow(QMainWindow):
 
     def _on_save_selected(self, session_id):
         """选择存档后加载。"""
+        logger.info(f"加载存档: session_id={session_id}")
         try:
             result = db.load_full_session(session_id)
             if result is None:
@@ -563,13 +681,18 @@ class WebMainWindow(QMainWindow):
 
             case_id, engine_state_dict = result
             case_data = db.load_case(case_id)
+
             if case_data is None:
-                self.bridge.show_dialog.emit("读档失败", f"关联案件未找到: {case_id}")
+                # 降级：尝试从 engine_state_dict 中恢复案件信息
+                case_title = engine_state_dict.get("case_title", "未知案件")
+                self.bridge.show_dialog.emit(
+                    "读档警告",
+                    f"关联案件「{case_title}」的数据缺失，无法完整恢复。\n"
+                    f"案件ID: {case_id}"
+                )
                 return
 
             self.engine = InterrogationEngine.from_dict(engine_state_dict, case_data)
-
-            self.bridge.clear_chat.emit()
 
             state = {
                 "suspects": [
@@ -586,6 +709,12 @@ class WebMainWindow(QMainWindow):
 
             self.bridge.init_game_state.emit(state)
             self.bridge.set_input_enabled.emit(True)
+
+            # 根据游戏状态决定是否启用交互
+            if self.engine.state in ("breakdown", "verdict"):
+                self.bridge.set_game_interactive.emit(False)
+            else:
+                self.bridge.set_game_interactive.emit(True)
 
             for suspect in self.engine.suspects:
                 for msg in suspect.memory:

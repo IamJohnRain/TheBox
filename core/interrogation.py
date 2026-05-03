@@ -117,6 +117,9 @@ class InterrogationEngine:
 
         if result.get("secret_triggered"):
             self.state = "breakdown"
+            logger.info(
+                f"状态变更: interrogating → breakdown, 原因: {suspect.name} 泄露秘密: {result['secret_triggered']}"
+            )
             state_event: StateChangeEvent = {
                 "type": "state_change",
                 "new_state": "breakdown",
@@ -139,6 +142,7 @@ class InterrogationEngine:
 
         if self.time_left <= 0 and self.state not in ("verdict", "breakdown"):
             self.state = "verdict"
+            logger.info("状态变更: interrogating → verdict, 原因: 审讯时间耗尽")
             state_event: StateChangeEvent = {
                 "type": "state_change",
                 "new_state": "verdict",
@@ -160,6 +164,8 @@ class InterrogationEngine:
                 }
             )
         return {
+            "case_id": self.case.get("case_id", ""),
+            "case_title": self.case.get("title", ""),
             "suspects_states": suspects_states,
             "presented_evidence_ids": list(self.presented_evidence_ids),
             "time_left": self.time_left,
@@ -170,6 +176,12 @@ class InterrogationEngine:
     @staticmethod
     def from_dict(state: dict, case_data: dict) -> "InterrogationEngine":
         """Rebuild an InterrogationEngine from a serialized state dict and case data."""
+        # 在创建引擎前，确保 case_data 包含 case_id / title
+        if "case_id" not in case_data and state.get("case_id"):
+            case_data["case_id"] = state["case_id"]
+        if "title" not in case_data and state.get("case_title"):
+            case_data["title"] = state["case_title"]
+
         engine = InterrogationEngine(case_data)
         suspects_states = state.get("suspects_states", [])
         for i, suspect_state in enumerate(suspects_states):

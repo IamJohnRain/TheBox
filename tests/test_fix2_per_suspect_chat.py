@@ -43,21 +43,21 @@ class TestSwitchToSuspectWithNoMessages:
             return f.read()
 
     def test_switch_suspect_shows_placeholder_when_no_messages(self, chat_js_content):
-        """switchSuspect 在无消息时应显示占位消息。"""
+        """switchSuspect 在无消息时应调用 _showPlaceholder。"""
         switch_start = chat_js_content.index("switchSuspect(")
-        switch_section = chat_js_content[switch_start:switch_start + 800]
-        # 应有检查消息为空并显示占位符的逻辑
-        assert "msgs.length === 0" in switch_section or "msgs.length==0" in switch_section or \
-               "defaultMsgs.length === 0" in switch_section, (
-            "switchSuspect 应检查消息数量，为空时显示占位消息"
+        switch_section = chat_js_content[switch_start:switch_start + 1200]
+        # 新实现调用 _showPlaceholder 和 _hidePlaceholder
+        assert "_showPlaceholder" in switch_section, (
+            "switchSuspect 应在消息为空时调用 _showPlaceholder()"
         )
 
     def test_placeholder_contains_suspect_name(self, chat_js_content):
         """占位消息应包含嫌疑人名称。"""
-        switch_start = chat_js_content.index("switchSuspect(")
-        switch_section = chat_js_content[switch_start:switch_start + 1200]
+        # 占位符文本在 _showPlaceholder 方法中，使用 rfind 找到最后一次出现（方法定义）
+        placeholder_idx = chat_js_content.rfind("_showPlaceholder(")
+        placeholder_section = chat_js_content[placeholder_idx:placeholder_idx + 600]
         # 实际文本是 "的对话将在这里显示"
-        assert "对话将在这里显示" in switch_section, (
+        assert "对话将在这里显示" in placeholder_section, (
             "占位消息应提示用户此嫌疑人的对话将在此显示"
         )
 
@@ -89,12 +89,12 @@ class TestSystemMessagesCrossSuspect:
         )
 
     def test_system_messages_rendered_for_all_suspects(self, chat_js_content):
-        """系统消息在切换嫌疑人时应始终显示。"""
+        """系统消息在切换嫌疑人时应始终显示（通过 data-suspect="_default"）。"""
         switch_start = chat_js_content.index("switchSuspect(")
         switch_section = chat_js_content[switch_start:switch_start + 800]
-        # 应先渲染 default 的 system 消息，再渲染嫌疑人消息
-        assert "role === 'system'" in switch_section or "msg.role === 'system'" in switch_section, (
-            "switchSuspect 应筛选 _default 中的 system 消息进行渲染"
+        # 新实现通过 data-suspect="_default" 属性选择显示的消息
+        assert '_default' in switch_section, (
+            "switchSuspect 应显示 data-suspect='_default' 的消息（含系统消息）"
         )
 
 
@@ -107,13 +107,13 @@ class TestRapidSuspectSwitchNoMixup:
             return f.read()
 
     def test_switch_suspect_clears_container_before_render(self, chat_js_content):
-        """switchSuspect 应在重新渲染前清空容器。"""
+        """switchSuspect 应隐藏非当前嫌疑人的消息（CSS 切换替代 DOM 销毁）。"""
         switch_start = chat_js_content.index("switchSuspect(")
         switch_section = chat_js_content[switch_start:switch_start + 800]
-        # 应有 container.innerHTML = '' 或类似清空操作
-        assert "innerHTML = ''" in switch_section or "innerHTML=''" in switch_section, (
-            "switchSuspect 应在渲染前清空容器 innerHTML，"
-            "防止快速切换时消息混淆"
+        # 新实现使用 CSS class 控制显示/隐藏，而非 innerHTML 清空
+        assert "msg-hidden" in switch_section or "classList" in switch_section, (
+            "switchSuspect 应使用 CSS class 控制消息显示/隐藏，"
+            "而非销毁 DOM，防止页面闪动"
         )
 
     def test_messages_stored_per_suspect_not_globally(self, chat_js_content):
@@ -270,7 +270,7 @@ class TestChatJSPerSuspectContext:
         assert "switchSuspect" in chat_js_content
         switch_start = chat_js_content.index("switchSuspect")
         switch_section = chat_js_content[switch_start:switch_start + 500]
-        assert "innerHTML" in switch_section or "textContent" in switch_section or "removeChild" in switch_section
+        assert "classList" in switch_section or "msg-hidden" in switch_section
 
 
 class TestAppJSSuspectSwitch:

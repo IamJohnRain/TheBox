@@ -365,6 +365,10 @@
     text-align: left;
 }
 
+/* 消息显示/隐藏控制 */
+.message.msg-hidden { display: none; }
+.message.no-animation { animation: none; }
+
 
 /* ==========================================================================
    Evidence Card Component
@@ -484,6 +488,7 @@
     opacity: 0;
     visibility: hidden;
     transition: opacity 0.3s, visibility 0.3s;
+    will-change: transform;
 }
 
 .loading-overlay.active {
@@ -562,6 +567,7 @@
     opacity: 0;
     visibility: hidden;
     transition: opacity 0.3s, visibility 0.3s;
+    will-change: transform;
 }
 
 .modal-backdrop.active {
@@ -585,7 +591,7 @@
     z-index: var(--z-modal);
     opacity: 0;
     visibility: hidden;
-    transition: all 0.3s ease;
+    transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.3s ease;
 }
 
 .modal.active {

@@ -339,10 +339,10 @@ class TestSaveCaseTitleMissingFallback:
 
 
 class TestClearChatBeforeInitGameState:
-    """P1-9: 读档后 clear_chat 在 init_game_state 之前发出。"""
+    """P1-9: 读档后不再需要冗余 clear_chat 信号（BUG-1 修复）。"""
 
-    def test_clear_chat_before_init_game_state(self, qtbot, loaded_window, mock_case_simple):
-        """_on_save_selected 中 clear_chat 应在 init_game_state 之前 emit。"""
+    def test_no_redundant_clear_chat_before_init_game_state(self, qtbot, loaded_window, mock_case_simple):
+        """_on_save_selected 中不应再 emit clear_chat（switchSuspect 已处理清空逻辑）。"""
         engine_state = loaded_window.engine.to_dict()
 
         with patch("core.db.load_full_session",
@@ -362,14 +362,11 @@ class TestClearChatBeforeInitGameState:
             loaded_window._on_save_selected("sess_001")
             qtbot.wait(100)
 
-            assert "clear_chat" in signal_order, "应 emit clear_chat"
-            assert "init_game_state" in signal_order, "应 emit init_game_state"
-            clear_idx = signal_order.index("clear_chat")
-            init_idx = signal_order.index("init_game_state")
-            assert clear_idx < init_idx, (
-                f"clear_chat 应在 init_game_state 之前发出，"
-                f"实际顺序: {signal_order}"
+            assert "clear_chat" not in signal_order, (
+                "BUG-1 修复: _on_save_selected 不应 emit clear_chat，"
+                "switchSuspect 已处理清空逻辑，避免双重清空导致页面闪动"
             )
+            assert "init_game_state" in signal_order, "应 emit init_game_state"
 
 
 # ============================================================
