@@ -1,7 +1,7 @@
 ---
 description: 架构专家，负责独立评审方案并综合架构师意见，输出完整评审报告
 mode: primary
-model: AstronCodingPlan/astron-code-latest
+model: volcengine/kimi-k2.6
 temperature: 0.3
 permission:
   edit: allow
