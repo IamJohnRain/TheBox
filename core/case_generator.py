@@ -256,6 +256,7 @@ def generate_case(
         if progress_callback:
             progress_callback(msg)
 
+    _progress("📐 正在搭建虚拟世界框架...")
     client = LLMClient()
     _progress("🎬 正在打造故事场景...")
     if not client.is_initialized:
@@ -278,12 +279,14 @@ def generate_case(
             else:
                 system_prompt = _build_system_prompt(background)
 
-            _progress("🧠 正在与 AI 构思案件...")
+            _progress("🧠 正在与 AI 构思案件...分析背景故事")
 
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": "请生成案件。"},
             ]
+
+            _progress("🧠 正在与 AI 构思案件...设计人物与情节")
 
             content = client.chat_completion(
                 messages=messages,

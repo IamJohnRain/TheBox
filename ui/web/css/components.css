@@ -445,6 +445,42 @@
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
     line-height: var(--line-height-normal);
+    max-height: 4.5em;
+    overflow: hidden;
+    position: relative;
+    transition: max-height 0.3s ease;
+}
+
+.evidence-description.expanded {
+    max-height: none;
+}
+
+.evidence-description:not(.expanded)::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2em;
+    background: linear-gradient(transparent, var(--color-bg-card));
+    pointer-events: none;
+}
+
+.evidence-expand-btn {
+    display: inline-block;
+    margin-top: var(--space-1);
+    font-size: var(--font-size-xs);
+    color: var(--color-accent-purple);
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: 0;
+    font-weight: var(--font-weight-medium);
+    transition: color var(--transition-fast);
+}
+
+.evidence-expand-btn:hover {
+    color: var(--color-accent-cyan);
 }
 
 .evidence-tag {
@@ -579,19 +615,11 @@
     visibility: visible;
 }
 
-.modal {
+.modal-wrapper {
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%) scale(0.9);
-    background: var(--color-bg-secondary);
-    border: 1px solid rgba(0, 245, 255, 0.2);
-    border-radius: var(--layout-border-radius-xl);
-    padding: var(--space-8);
-    min-width: 400px;
-    max-width: 90vw;
-    max-height: 90vh;
-    overflow-y: auto;
     z-index: var(--z-modal);
     opacity: 0;
     visibility: hidden;
@@ -600,10 +628,23 @@
     contain: layout style;
 }
 
-.modal.active {
+.modal-wrapper.active {
     opacity: 1;
     visibility: visible;
     transform: translate(-50%, -50%) scale(1);
+}
+
+.modal {
+    background: var(--color-bg-secondary);
+    border: 1px solid rgba(0, 245, 255, 0.2);
+    border-radius: var(--layout-border-radius-xl);
+    padding: var(--space-8);
+    min-width: 400px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    backface-visibility: hidden;
+    contain: paint;
 }
 
 .modal-header {
@@ -635,6 +676,30 @@
 .modal-close:hover {
     background: var(--color-danger);
     color: white;
+}
+
+body.modal-open .pressure-bar.high {
+    animation-play-state: paused;
+}
+
+body.modal-open .pressure-bar::after {
+    animation-play-state: paused;
+}
+
+body.modal-open .timer-display.danger {
+    animation-play-state: paused;
+}
+
+body.modal-open .timer-display.warning {
+    animation-play-state: paused;
+}
+
+body.modal-open .nav-btn-ending {
+    animation-play-state: paused;
+}
+
+body.modal-open .typing-dot {
+    animation-play-state: paused;
 }
 
 .modal-body {
@@ -1072,6 +1137,28 @@
 .gen-step-text-pending {
     color: var(--color-text-muted);
     opacity: 0.5;
+}
+
+.gen-sub-hint-wrapper {
+    padding-left: calc(22px + var(--space-2));
+    margin-top: calc(-1 * var(--space-1));
+    margin-bottom: var(--space-1);
+}
+
+.gen-sub-hint {
+    font-size: var(--font-size-xs);
+    color: var(--color-accent-purple);
+    opacity: 0.7;
+    display: inline-block;
+}
+
+.gen-sub-hint-fade {
+    animation: gen-sub-hint-in 0.4s ease-out;
+}
+
+@keyframes gen-sub-hint-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 0.7; transform: translateY(0); }
 }
 
 .gen-progress-bar {

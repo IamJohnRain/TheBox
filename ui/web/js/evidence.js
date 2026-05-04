@@ -86,7 +86,6 @@ class EvidenceManager {
     _addEvidenceCard(evidence) {
         if (!this.listEl) return;
 
-        // 移除空状态提示
         const emptyMsg = this.listEl.querySelector('.evidence-empty');
         if (emptyMsg) {
             emptyMsg.remove();
@@ -97,6 +96,9 @@ class EvidenceManager {
         card.setAttribute('role', 'listitem');
         card.setAttribute('data-evidence-id', evidence.id);
         card.setAttribute('tabindex', '0');
+
+        const desc = evidence.description || '';
+        const DESC_COLLAPSE_THRESHOLD = 60;
 
         card.innerHTML = `
             <div class="evidence-header">
@@ -112,23 +114,37 @@ class EvidenceManager {
                 <h4 class="evidence-title">${this._escapeHtml(evidence.name || '未知证据')}</h4>
             </div>
             <p class="evidence-description">${this._escapeHtml(evidence.description || '')}</p>
+            ${desc.length > DESC_COLLAPSE_THRESHOLD ? '<button class="evidence-expand-btn">展开</button>' : ''}
         `;
 
-        // 点击事件：弹出确认对话框
-        card.addEventListener('click', () => {
+        const expandBtn = card.querySelector('.evidence-expand-btn');
+        if (expandBtn) {
+            expandBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const descEl = card.querySelector('.evidence-description');
+                if (descEl.classList.contains('expanded')) {
+                    descEl.classList.remove('expanded');
+                    expandBtn.textContent = '展开';
+                } else {
+                    descEl.classList.add('expanded');
+                    expandBtn.textContent = '收起';
+                }
+            });
+        }
+
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.evidence-expand-btn')) return;
             this._onEvidenceClick(evidence);
         });
 
-        // 键盘支持：Enter 键触发点击
         card.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.target.closest('.evidence-expand-btn')) {
                 this._onEvidenceClick(evidence);
             }
         });
 
         this.listEl.appendChild(card);
 
-        // 滚动到新证据
         this.listEl.scrollTop = this.listEl.scrollHeight;
     }
 

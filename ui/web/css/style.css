@@ -283,6 +283,28 @@ ol {
     height: 18px;
 }
 
+.nav-btn-ending {
+    color: var(--color-warning);
+    background: rgba(255, 170, 0, 0.1);
+    border-color: rgba(255, 170, 0, 0.3);
+}
+
+.nav-btn-ending:hover {
+    color: var(--color-warning);
+    background: rgba(255, 170, 0, 0.18);
+    border-color: rgba(255, 170, 0, 0.5);
+    box-shadow: 0 0 20px rgba(255, 170, 0, 0.4);
+}
+
+@keyframes ending-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(255, 170, 0, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(255, 170, 0, 0.6); }
+}
+
+.nav-btn-ending {
+    animation: ending-glow 2s ease-in-out infinite;
+}
+
 
 /* ==========================================================================
    Left Sidebar - Suspect Panel

@@ -6,12 +6,22 @@ class ModalManager {
     constructor() {
         this.backdrop = document.getElementById('modal-backdrop');
         this.modal = document.getElementById('modal');
+        this.wrapper = this._createWrapper();
         this.titleEl = document.getElementById('modal-title');
         this.bodyEl = document.getElementById('modal-body');
         this.footerEl = document.getElementById('modal-footer');
         this.closeBtn = document.getElementById('modal-close');
         this._confirmCallback = null;
         this._bindEvents();
+    }
+
+    _createWrapper() {
+        if (!this.modal || !this.backdrop) return null;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'modal-wrapper';
+        this.backdrop.parentNode.insertBefore(wrapper, this.modal);
+        wrapper.appendChild(this.modal);
+        return wrapper;
     }
 
     _bindEvents() {
@@ -477,6 +487,17 @@ class ModalManager {
         ];
         this._genCurrentStep = -1;
         this._genTypewriterTimer = null;
+        this._genSubStepTimer = null;
+        this._genSubHintIndex = 0;
+        this._genSubHintFromBackend = null;
+        this._genSubHints = [
+            '分析背景故事',
+            '设计人物与情节',
+            '构建犯罪手法',
+            '编织线索网络',
+            '完善逻辑链条',
+            '校验案件合理性',
+        ];
 
         const bodyHtml = `
             <div class="modal-form">
@@ -543,6 +564,39 @@ class ModalManager {
     _resetGenSteps() {
         this._genSteps.forEach((s) => { s.status = 'pending'; });
         this._genCurrentStep = -1;
+        this._clearGenSubStepTimer();
+        this._genSubHintIndex = 0;
+        this._genSubHintFromBackend = null;
+    }
+
+    _clearGenSubStepTimer() {
+        if (this._genSubStepTimer) {
+            clearInterval(this._genSubStepTimer);
+            this._genSubStepTimer = null;
+        }
+    }
+
+    _startGenSubStepCarousel() {
+        this._clearGenSubStepTimer();
+        this._genSubHintIndex = 0;
+        this._genSubHintFromBackend = null;
+        this._updateSubHintDisplay();
+
+        this._genSubStepTimer = setInterval(() => {
+            this._genSubHintFromBackend = null;
+            this._genSubHintIndex = (this._genSubHintIndex + 1) % this._genSubHints.length;
+            this._updateSubHintDisplay();
+        }, 3000);
+    }
+
+    _updateSubHintDisplay() {
+        const el = document.getElementById('gen-sub-hint');
+        if (!el) return;
+        const hint = this._genSubHintFromBackend || this._genSubHints[this._genSubHintIndex];
+        el.textContent = hint;
+        el.classList.remove('gen-sub-hint-fade');
+        void el.offsetWidth;
+        el.classList.add('gen-sub-hint-fade');
     }
 
     _matchStepIndex(message) {
@@ -561,6 +615,15 @@ class ModalManager {
         return -1;
     }
 
+    _extractSubHint(message, stepIdx) {
+        if (stepIdx !== 2) return null;
+        const dotIdx = message.indexOf('...');
+        if (dotIdx >= 0 && dotIdx < message.length - 3) {
+            return message.substring(dotIdx + 3).trim();
+        }
+        return null;
+    }
+
     _renderGenSteps() {
         let html = '<div class="gen-progress">';
         this._genSteps.forEach((step, i) => {
@@ -577,6 +640,10 @@ class ModalManager {
                 textClass = 'gen-step-text-pending';
             }
             html += `<div class="gen-step ${step.status}">${icon}<span class="gen-step-text ${textClass}" id="gen-step-text-${i}">${step.status === 'active' ? '' : this._escapeHtml(step.text)}</span></div>`;
+            if (step.status === 'active' && i === 2) {
+                const subHint = this._genSubHintFromBackend || this._genSubHints[this._genSubHintIndex];
+                html += `<div class="gen-sub-hint-wrapper"><span class="gen-sub-hint gen-sub-hint-fade" id="gen-sub-hint">${this._escapeHtml(subHint)}</span></div>`;
+            }
         });
         html += '</div>';
 
@@ -611,13 +678,31 @@ class ModalManager {
         const stepIdx = this._matchStepIndex(message);
         if (stepIdx < 0) return;
 
-        if (stepIdx <= this._genCurrentStep) return;
+        if (stepIdx <= this._genCurrentStep) {
+            const subHint = this._extractSubHint(message, stepIdx);
+            if (subHint && stepIdx === 2) {
+                this._genSubHintFromBackend = subHint;
+                this._updateSubHintDisplay();
+            }
+            return;
+        }
 
         if (this._genCurrentStep >= 0) {
             this._genSteps[this._genCurrentStep].status = 'done';
+            if (this._genCurrentStep === 2) {
+                this._clearGenSubStepTimer();
+            }
         }
         this._genSteps[stepIdx].status = 'active';
         this._genCurrentStep = stepIdx;
+
+        if (stepIdx === 2) {
+            const subHint = this._extractSubHint(message, stepIdx);
+            if (subHint) {
+                this._genSubHintFromBackend = subHint;
+            }
+            this._startGenSubStepCarousel();
+        }
 
         const resultEl = document.getElementById('generate-result');
         if (resultEl) {
@@ -683,6 +768,7 @@ class ModalManager {
             clearInterval(this._genTypewriterTimer);
             this._genTypewriterTimer = null;
         }
+        this._clearGenSubStepTimer();
 
         let errorType = 'unknown';
         try {
@@ -766,6 +852,7 @@ class ModalManager {
             clearInterval(this._genTypewriterTimer);
             this._genTypewriterTimer = null;
         }
+        this._clearGenSubStepTimer();
         this.hide();
     }
 
@@ -775,9 +862,10 @@ class ModalManager {
 
     hide() {
         if (this.backdrop) this.backdrop.classList.remove('active');
+        if (this.wrapper) this.wrapper.classList.remove('active');
         if (this.modal) this.modal.classList.remove('active');
         this._confirmCallback = null;
-        // 恢复因模态框暂停的计时器 UI 更新
+        document.body.classList.remove('modal-open');
         if (window.timerManager) window.timerManager.flush();
     }
 
@@ -812,7 +900,9 @@ class ModalManager {
         }
 
         this.backdrop.classList.add('active');
+        if (this.wrapper) this.wrapper.classList.add('active');
         this.modal.classList.add('active');
+        document.body.classList.add('modal-open');
     }
 
     _escapeHtml(text) {

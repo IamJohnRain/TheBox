@@ -88,6 +88,12 @@
             if (!data || !data.state) return;
             const state = data.state;
 
+            if (state.suspects && state.suspects.length > 0) {
+                window._cachedEndingData = null;
+                const btnEnding = document.getElementById('btn-ending');
+                if (btnEnding) btnEnding.style.display = 'none';
+            }
+
             if (state.suspects) {
                 suspectManager.loadSuspects(state.suspects);
             }
@@ -136,6 +142,13 @@
             if (!data || !data.data) return;
             const d = data.data;
             const state = d.state || {};
+
+            const suspects = state.suspects || [];
+            if (suspects.length > 0 && d.interactive !== false) {
+                window._cachedEndingData = null;
+                const btnEnding = document.getElementById('btn-ending');
+                if (btnEnding) btnEnding.style.display = 'none';
+            }
 
             if (state.suspects) {
                 suspectManager.loadSuspects(state.suspects);
@@ -201,6 +214,7 @@
 
         bridge.on('suspectUpdate', rafThrottle((data) => {
             if (!data) return;
+            if (window.modalManager && window.modalManager.isVisible()) return;
             suspectManager.updateSuspect(data.name, data.pressure);
         }));
 
@@ -269,6 +283,9 @@
 
         bridge.on('showEndingDialog', (data) => {
             if (!data) return;
+            window._cachedEndingData = data;
+            const btnEnding = document.getElementById('btn-ending');
+            if (btnEnding) btnEnding.style.display = '';
             modalManager.showEndingDialog(data.title, data.message);
         });
 
@@ -375,6 +392,15 @@
 
         bindButton('btn-settings', () => {
             if (window.bridge) window.bridge.requestSettings();
+        });
+
+        bindButton('btn-ending', () => {
+            if (window._cachedEndingData) {
+                modalManager.showEndingDialog(
+                    window._cachedEndingData.title,
+                    window._cachedEndingData.message
+                );
+            }
         });
 
         const suspectSelector = document.getElementById('suspect-selector');

@@ -120,42 +120,86 @@ class TestFix1BackdropFilterRemoved:
 # ============================================================
 
 class TestFix2CssPerformanceOptimizations:
-    """Fix 2: .modal 添加 will-change/contain，.modal-backdrop 添加 contain: strict。"""
+    """Fix 2: .modal 使用 backface-visibility:hidden + contain:paint，.modal-wrapper 承载 will-change/transform。"""
 
-    def test_modal_has_will_change(self):
-        """`.modal` 包含 `will-change` 属性。"""
+    def test_modal_has_backface_visibility_hidden(self):
+        """`.modal` 包含 `backface-visibility: hidden` 属性。"""
         css = _get_css_content()
         block = _extract_css_block(css, ".modal")
-        # 排除 .modal.active 等子块的干扰
-        assert "will-change" in block, (
-            ".modal 应包含 will-change 属性"
+        assert "backface-visibility" in block, (
+            ".modal 应包含 backface-visibility 属性"
+        )
+        assert "hidden" in block, (
+            ".modal 的 backface-visibility 应为 hidden"
         )
 
-    def test_modal_will_change_includes_opacity_and_transform(self):
-        """`.modal` 的 `will-change` 包含 opacity 和 transform。"""
+    def test_modal_no_will_change(self):
+        """`.modal` 不包含 `will-change` 属性（已移至 .modal-wrapper）。"""
         css = _get_css_content()
         block = _extract_css_block(css, ".modal")
-        will_change_match = re.search(r"will-change\s*:\s*([^;]+);", block)
-        assert will_change_match is not None, ".modal 中未找到 will-change 声明"
-        value = will_change_match.group(1).strip()
-        assert "opacity" in value, f"will-change 应包含 opacity, 实际值: {value}"
-        assert "transform" in value, f"will-change 应包含 transform, 实际值: {value}"
+        assert "will-change" not in block, (
+            ".modal 不应包含 will-change 属性（已移至 .modal-wrapper）"
+        )
 
-    def test_modal_has_contain(self):
-        """`.modal` 包含 `contain` 属性。"""
-        css = _get_css_content()
-        block = _extract_css_block(css, ".modal")
-        assert "contain" in block, ".modal 应包含 contain 属性"
-
-    def test_modal_contain_value_is_layout_style(self):
-        """`.modal` 的 `contain` 值为 `layout style`。"""
+    def test_modal_has_contain_paint(self):
+        """`.modal` 的 `contain` 值为 `paint`（兼容滚动容器）。"""
         css = _get_css_content()
         block = _extract_css_block(css, ".modal")
         contain_match = re.search(r"contain\s*:\s*([^;]+);", block)
         assert contain_match is not None, ".modal 中未找到 contain 声明"
         value = contain_match.group(1).strip()
-        assert "layout" in value, f"contain 应包含 layout, 实际值: {value}"
-        assert "style" in value, f"contain 应包含 style, 实际值: {value}"
+        assert value == "paint", f".modal 的 contain 值应为 paint, 实际值: {value}"
+
+    def test_modal_no_transform(self):
+        """`.modal` 不包含 `transform` 属性（transform 已移至 .modal-wrapper）。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal")
+        assert "transform" not in block, (
+            ".modal 不应包含 transform 属性（已移至 .modal-wrapper）"
+        )
+
+    def test_modal_no_position_fixed(self):
+        """`.modal` 不包含 `position: fixed`（定位已移至 .modal-wrapper）。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal")
+        assert "position" not in block or "fixed" not in block, (
+            ".modal 不应包含 position:fixed（定位已移至 .modal-wrapper）"
+        )
+
+    def test_modal_wrapper_has_will_change(self):
+        """`.modal-wrapper` 包含 `will-change` 属性。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal-wrapper")
+        assert "will-change" in block, (
+            ".modal-wrapper 应包含 will-change 属性"
+        )
+
+    def test_modal_wrapper_has_transform(self):
+        """`.modal-wrapper` 包含 `transform` 属性。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal-wrapper")
+        assert "transform" in block, (
+            ".modal-wrapper 应包含 transform 属性"
+        )
+
+    def test_modal_wrapper_has_contain_layout_style(self):
+        """`.modal-wrapper` 的 `contain` 值为 `layout style`。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal-wrapper")
+        contain_match = re.search(r"contain\s*:\s*([^;]+);", block)
+        assert contain_match is not None, ".modal-wrapper 中未找到 contain 声明"
+        value = contain_match.group(1).strip()
+        assert "layout" in value and "style" in value, (
+            f".modal-wrapper 的 contain 应包含 layout 和 style, 实际值: {value}"
+        )
+
+    def test_modal_wrapper_has_position_fixed(self):
+        """`.modal-wrapper` 包含 `position: fixed`。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal-wrapper")
+        assert "fixed" in block, (
+            ".modal-wrapper 应包含 position:fixed"
+        )
 
     def test_modal_backdrop_has_contain_strict(self):
         """`.modal-backdrop` 包含 `contain: strict`。"""
@@ -646,3 +690,188 @@ class TestCrossFixIntegration:
         assert "return false" in nearby, (
             "生成按钮回调应返回 false 阻止模态框关闭（允许查看进度）"
         )
+
+
+# ============================================================
+# Fix 8: Modal Wrapper 分离 transform 和 scroll
+# ============================================================
+
+class TestFix8ModalWrapperSeparation:
+    """Fix 8: .modal-wrapper 承载 transform 居中，.modal 只做滚动容器。"""
+
+    def test_modal_wrapper_created_in_constructor(self):
+        """ModalManager 构造函数中创建 wrapper。"""
+        content = _get_js_content("modal.js")
+        assert "_createWrapper" in content, (
+            "ModalManager 应有 _createWrapper 方法"
+        )
+
+    def test_modal_wrapper_stored_as_property(self):
+        """ModalManager 将 wrapper 存为 this.wrapper 属性。"""
+        content = _get_js_content("modal.js")
+        assert "this.wrapper" in content, (
+            "ModalManager 应将 wrapper 存为 this.wrapper"
+        )
+
+    def test_modal_wrapper_appends_modal(self):
+        """_createWrapper 将 modal 元素移入 wrapper。"""
+        content = _get_js_content("modal.js")
+        wrapper_pos = content.find("_createWrapper")
+        assert wrapper_pos > 0, "未找到 _createWrapper 方法"
+        method_body = content[wrapper_pos:wrapper_pos + 800]
+        assert "appendChild" in method_body, (
+            "_createWrapper 应使用 appendChild 将 modal 移入 wrapper"
+        )
+
+    def test_show_toggles_wrapper_active(self):
+        """_show 方法切换 wrapper 的 active 类。"""
+        content = _get_js_content("modal.js")
+        show_pos = content.find("_show(title, bodyHtml, buttons)")
+        if show_pos < 0:
+            show_pos = content.find("_show(title,")
+        assert show_pos > 0, "未找到 _show 方法"
+        method_body = content[show_pos:show_pos + 2000]
+        assert "wrapper" in method_body, "_show 方法应操作 wrapper"
+        assert "classList.add" in method_body, "_show 应添加 active 类"
+
+    def test_hide_toggles_wrapper_active(self):
+        """hide 方法切换 wrapper 的 active 类。"""
+        content = _get_js_content("modal.js")
+        hide_method_pattern = re.compile(r"^\s+hide\(\)\s*\{", re.MULTILINE)
+        match = hide_method_pattern.search(content)
+        assert match is not None, "未找到 hide() 方法定义"
+        hide_start = match.start()
+        next_method = re.search(r"\n\s+(?:_?\w+\(|/\*\*)", content[hide_start + 10:])
+        if next_method:
+            method_end = hide_start + 10 + next_method.start()
+        else:
+            method_end = len(content)
+        method_body = content[hide_start:method_end]
+        assert "wrapper" in method_body, "hide 方法应操作 wrapper"
+
+    def test_modal_has_overflow_y_auto(self):
+        """`.modal` 保留 `overflow-y: auto` 作为滚动容器。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal")
+        assert "overflow-y" in block and "auto" in block, (
+            ".modal 应保留 overflow-y: auto 作为滚动容器"
+        )
+
+    def test_modal_wrapper_no_overflow(self):
+        """`.modal-wrapper` 不是滚动容器，不含 overflow 属性。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, ".modal-wrapper")
+        assert "overflow" not in block, (
+            ".modal-wrapper 不应包含 overflow 属性"
+        )
+
+
+# ============================================================
+# Fix 9: suspectUpdate 模态框守卫
+# ============================================================
+
+class TestFix9SuspectUpdateModalGuard:
+    """Fix 9: suspectUpdate 信号在模态框可见时跳过更新。"""
+
+    def test_suspect_update_checks_modal_visible(self):
+        """suspectUpdate 事件处理器检查 modalManager.isVisible()。"""
+        content = _get_js_content("app.js")
+        suspect_pos = content.find("suspectUpdate")
+        assert suspect_pos > 0, "未找到 suspectUpdate 事件绑定"
+        nearby = content[suspect_pos:suspect_pos + 300]
+        assert "modalManager" in nearby, (
+            "suspectUpdate 处理器应检查 modalManager"
+        )
+        assert "isVisible" in nearby, (
+            "suspectUpdate 处理器应调用 modalManager.isVisible()"
+        )
+
+    def test_suspect_update_returns_early_when_modal_visible(self):
+        """suspectUpdate 在模态框可见时 early return。"""
+        content = _get_js_content("app.js")
+        suspect_pos = content.find("suspectUpdate")
+        nearby = content[suspect_pos:suspect_pos + 300]
+        assert "return" in nearby, (
+            "suspectUpdate 处理器在模态框可见时应 early return"
+        )
+
+
+# ============================================================
+# Fix 10: 模态框打开时暂停 CSS 动画
+# ============================================================
+
+class TestFix10ModalOpenPauseAnimations:
+    """Fix 10: body.modal-open 暂停后台 CSS 动画。"""
+
+    def test_body_modal_open_pressure_bar_high_paused(self):
+        """`body.modal-open .pressure-bar.high` 暂停动画。"""
+        css = _get_css_content()
+        assert "body.modal-open" in css, (
+            "components.css 应包含 body.modal-open 规则"
+        )
+        block = _extract_css_block(css, "body.modal-open .pressure-bar.high")
+        assert "animation-play-state" in block, (
+            "body.modal-open .pressure-bar.high 应包含 animation-play-state: paused"
+        )
+        assert "paused" in block, (
+            "body.modal-open .pressure-bar.high 的 animation-play-state 应为 paused"
+        )
+
+    def test_body_modal_open_pressure_bar_after_paused(self):
+        """`body.modal-open .pressure-bar::after` 暂停动画。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, "body.modal-open .pressure-bar::after")
+        assert "animation-play-state" in block, (
+            "body.modal-open .pressure-bar::after 应暂停动画"
+        )
+
+    def test_body_modal_open_timer_danger_paused(self):
+        """`body.modal-open .timer-display.danger` 暂停动画。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, "body.modal-open .timer-display.danger")
+        assert "animation-play-state" in block, (
+            "body.modal-open .timer-display.danger 应暂停动画"
+        )
+
+    def test_body_modal_open_timer_warning_paused(self):
+        """`body.modal-open .timer-display.warning` 暂停动画。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, "body.modal-open .timer-display.warning")
+        assert "animation-play-state" in block, (
+            "body.modal-open .timer-display.warning 应暂停动画"
+        )
+
+    def test_body_modal_open_nav_ending_paused(self):
+        """`body.modal-open .nav-btn-ending` 暂停动画。"""
+        css = _get_css_content()
+        block = _extract_css_block(css, "body.modal-open .nav-btn-ending")
+        assert "animation-play-state" in block, (
+            "body.modal-open .nav-btn-ending 应暂停动画"
+        )
+
+    def test_modal_show_adds_body_modal_open(self):
+        """_show 方法添加 body.modal-open 类。"""
+        content = _get_js_content("modal.js")
+        show_pos = content.find("_show(title, bodyHtml, buttons)")
+        if show_pos < 0:
+            show_pos = content.find("_show(title,")
+        assert show_pos > 0, "未找到 _show 方法"
+        method_body = content[show_pos:show_pos + 2000]
+        assert "document.body" in method_body, "_show 应操作 document.body"
+        assert "modal-open" in method_body, "_show 应添加 modal-open 类"
+
+    def test_modal_hide_removes_body_modal_open(self):
+        """hide 方法移除 body.modal-open 类。"""
+        content = _get_js_content("modal.js")
+        hide_method_pattern = re.compile(r"^\s+hide\(\)\s*\{", re.MULTILINE)
+        match = hide_method_pattern.search(content)
+        assert match is not None, "未找到 hide() 方法定义"
+        hide_start = match.start()
+        next_method = re.search(r"\n\s+(?:_?\w+\(|/\*\*)", content[hide_start + 10:])
+        if next_method:
+            method_end = hide_start + 10 + next_method.start()
+        else:
+            method_end = len(content)
+        method_body = content[hide_start:method_end]
+        assert "modal-open" in method_body, "hide 应移除 modal-open 类"
+        assert "remove" in method_body, "hide 应使用 classList.remove 移除 modal-open"
