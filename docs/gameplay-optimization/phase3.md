@@ -1,6 +1,7 @@
-# Phase 3：工具与成长 — 消耗品工具 + 玩家等级（优化版 v1.1）
+# Phase 3：工具与成长 — 消耗品工具 + 三级心理侧写 + 玩家等级（优化版 v1.2）
 
-> **评审变更**：Phase 3拆分为3a+3b、工具系统预留策略模式接口、修复psych_collapse直接跳级、threat随机改为压力驱动、lie_detector knowledge泄露防护、数据库版本号迁移机制
+> **评审变更**：Phase 3拆分为3a+3b、工具系统预留策略模式接口、修复psych_collapse直接跳级、threat随机改为压力驱动、lie_detector knowledge泄露防护、数据库版本号迁移机制  
+> **v1.2 变更**：心理侧写升级为三级体系（初级/高级/大师），对应解锁不同隐藏维度可见性；loyalty维度影响多人对质效果
 
 ## 前置依赖
 
@@ -161,17 +162,30 @@ def _use_tool(self, tool_name: str, content: str) -> List[UIEvent]:
 
 ### 3a.2 基础工具实现（4个）
 
-#### 工具1：心理侧写
+#### 工具1：心理侧写（三级体系）
+
+**设计**：心理侧写分为初级/高级/大师三档，每档解锁不同的隐藏维度可见性。每档各1次/局，使用时消耗1次对应档位。
+
+**可见性等级**：
+
+| 档位 | 解锁等级 | 可见维度 | 消耗/局 |
+|------|---------|---------|---------|
+| 初级 | Lv.2 | personality + fear | 1次 |
+| 高级 | Lv.10 | + defiance + empathy_susceptibility | 1次 |
+| 大师 | Lv.15 | + deception_skill + loyalty | 1次 |
+
+**注册3个工具**：
 
 ```python
 # core/tools/psych_profile.py
 from core.tools import Tool, register_tool
 from schemas.events import NewMessageEvent, ToolUseEvent
+from core.game_config import DIMENSION_VISIBILITY
 
 @register_tool
-class PsychProfileTool(Tool):
-    name = "psych_profile"
-    display_name = "心理侧写"
+class PsychProfileBasicTool(Tool):
+    name = "psych_profile_basic"
+    display_name = "心理侧写（初级）"
     max_uses = 1
     unlock_level = 2
     cost_time = 0
@@ -179,10 +193,79 @@ class PsychProfileTool(Tool):
     def execute(self, engine, suspect, content: str):
         personality = suspect._suspect_data.get("personality", "未知")
         role = suspect._suspect_data.get("role", "未知")
-        msg = f"【心理侧写】\n角色: {role}\n性格: {personality}\n弱点: 根据性格特征，该嫌疑人可能对情感诉求或逻辑矛盾较为敏感。"
+        fear = suspect.fear
+        msg = (
+            f"【初级心理侧写】\n"
+            f"角色: {role}\n"
+            f"性格: {personality}\n"
+            f"恐惧值: {fear}/100\n"
+            f"分析: 根据性格特征，该嫌疑人"
+            f"{'对情感诉求较为敏感，共情可能有效' if fear > 60 else '较为冷静，需要更强的证据施压'}。"
+        )
         return [
             NewMessageEvent(type="new_message", role="system", content=msg, suspect_name=None),
-            ToolUseEvent(type="tool_use", tool_name="psych_profile", result=msg),
+            ToolUseEvent(type="tool_use", tool_name="psych_profile_basic", result=msg),
+        ]
+
+
+@register_tool
+class PsychProfileAdvancedTool(Tool):
+    name = "psych_profile_advanced"
+    display_name = "心理侧写（高级）"
+    max_uses = 1
+    unlock_level = 10
+    cost_time = 0
+
+    def execute(self, engine, suspect, content: str):
+        personality = suspect._suspect_data.get("personality", "未知")
+        fear = suspect.fear
+        defiance = suspect.defiance
+        empathy_sus = suspect.empathy_susceptibility
+        msg = (
+            f"【高级心理侧写】\n"
+            f"性格: {personality}\n"
+            f"恐惧值: {fear}/100\n"
+            f"抗压性: {defiance}/100（{'极强，施压效果大幅削弱' if defiance > 70 else '一般' if defiance > 30 else '较弱，施压效果较好'}）\n"
+            f"共情易感性: {empathy_sus}/100（{'高，共情非常有效' if empathy_sus > 70 else '一般' if empathy_sus > 30 else '低，共情效果较弱'}）\n"
+            f"策略建议: "
+            f"{'优先使用共情策略' if empathy_sus > defiance else '优先使用施压策略'}，"
+            f"{'注意恐惧值较低，先建立压力再施压' if fear < 40 else ''}。"
+        )
+        return [
+            NewMessageEvent(type="new_message", role="system", content=msg, suspect_name=None),
+            ToolUseEvent(type="tool_use", tool_name="psych_profile_advanced", result=msg),
+        ]
+
+
+@register_tool
+class PsychProfileMasterTool(Tool):
+    name = "psych_profile_master"
+    display_name = "心理侧写（大师）"
+    max_uses = 1
+    unlock_level = 15
+    cost_time = 0
+
+    def execute(self, engine, suspect, content: str):
+        personality = suspect._suspect_data.get("personality", "未知")
+        fear = suspect.fear
+        defiance = suspect.defiance
+        empathy_sus = suspect.empathy_susceptibility
+        deception = suspect.deception_skill
+        loyalty = suspect.loyalty
+        msg = (
+            f"【大师级心理侧写】\n"
+            f"性格: {personality}\n"
+            f"恐惧值: {fear}/100\n"
+            f"抗压性: {defiance}/100\n"
+            f"共情易感性: {empathy_sus}/100\n"
+            f"欺骗技巧: {deception}/100（{'极强，反驳很难被识破' if deception > 70 else '一般' if deception > 30 else '较弱，反驳容易失败'}）\n"
+            f"忠诚度: {loyalty}/100（{'极强，多人对质难以撬动' if loyalty > 70 else '一般' if loyalty > 30 else '较弱，多人对质可能背叛同伙'}）\n"
+            f"综合评估: "
+            f"{'该嫌疑人心理防线坚固，需要证据链+施压组合突破' if defiance > 60 and deception > 60 else '该嫌疑人心理存在弱点，可通过针对性策略突破'}。"
+        )
+        return [
+            NewMessageEvent(type="new_message", role="system", content=msg, suspect_name=None),
+            ToolUseEvent(type="tool_use", tool_name="psych_profile_master", result=msg),
         ]
 ```
 
@@ -473,6 +556,7 @@ class DualInterrogationTool(Tool):
         """两名嫌疑人同时审讯，压力效果翻倍。
 
         当前嫌疑人压力+20，同时让另一名嫌疑人听到对话并反应。
+        loyalty 维度影响：另一名嫌疑人 pressure > loyalty 时可能背叛同伙。
         """
         current_idx = engine.current_suspect_index
         other_idx = (current_idx + 1) % len(engine.suspects)
@@ -481,12 +565,17 @@ class DualInterrogationTool(Tool):
         # 当前嫌疑人压力+20
         suspect.pressure = max(0, min(100, suspect.pressure + 20))
 
-        # 另一名嫌疑人反应
+        # 另一名嫌疑人反应（受loyalty影响）
         prompt = f"（另一名嫌疑人 {suspect.name} 被审讯员严厉质问，你在一旁听到...）"
         other_result = other_suspect.respond(prompt)
 
+        # loyalty 检查：如果另一名嫌疑人压力大且忠诚度低，可能泄露信息
+        loyalty_hint = ""
+        if other_suspect.pressure > other_suspect.loyalty:
+            loyalty_hint = f"\n注意：{other_suspect.name} 的忠诚度较低，在高压力下可能出卖同伙。"
+
         return [
-            NewMessageEvent(type="new_message", role="system", content="【多人对质】两名嫌疑人被同时审讯。", suspect_name=None),
+            NewMessageEvent(type="new_message", role="system", content=f"【多人对质】两名嫌疑人被同时审讯。{loyalty_hint}", suspect_name=None),
             NewMessageEvent(type="new_message", role="player", content=f"[对质] 你如何看待 {suspect.name} 的供述？", suspect_name=None),
             NewMessageEvent(type="new_message", role="suspect", content=other_result["reply"], suspect_name=other_suspect.name),
         ]
@@ -500,14 +589,16 @@ class DualInterrogationTool(Tool):
 # core/game_config.py — Phase 3a 添加
 
 TOOL_DEFINITIONS = {
-    "psych_profile":     {"display_name": "心理侧写",   "max_uses": 1, "unlock_level": 2,  "cost_time": 0},
-    "lie_detector":      {"display_name": "测谎仪",     "max_uses": 2, "unlock_level": 4,  "cost_time": 0},
-    "fake_evidence":     {"display_name": "伪造证据",   "max_uses": 1, "unlock_level": 6,  "cost_time": 10},
-    "memory_recall":     {"display_name": "记忆回溯",   "max_uses": 1, "unlock_level": 8,  "cost_time": 0},
-    "silent_pressure":   {"display_name": "沉默施压",   "max_uses": 2, "unlock_level": 10, "cost_time": 5},
-    "dual_interrogation":{"display_name": "多人对质",   "max_uses": 1, "unlock_level": 15, "cost_time": 30},
-    "threat":            {"display_name": "威胁",       "max_uses": 1, "unlock_level": 14, "cost_time": 0},
-    "psych_collapse":    {"display_name": "心理崩溃",   "max_uses": 1, "unlock_level": 18, "cost_time": 60},
+    "psych_profile_basic":    {"display_name": "心理侧写（初级）", "max_uses": 1, "unlock_level": 2,  "cost_time": 0},
+    "psych_profile_advanced": {"display_name": "心理侧写（高级）", "max_uses": 1, "unlock_level": 10, "cost_time": 0},
+    "psych_profile_master":   {"display_name": "心理侧写（大师）", "max_uses": 1, "unlock_level": 15, "cost_time": 0},
+    "lie_detector":           {"display_name": "测谎仪",     "max_uses": 2, "unlock_level": 4,  "cost_time": 0},
+    "fake_evidence":          {"display_name": "伪造证据",   "max_uses": 1, "unlock_level": 6,  "cost_time": 10},
+    "memory_recall":          {"display_name": "记忆回溯",   "max_uses": 1, "unlock_level": 8,  "cost_time": 0},
+    "silent_pressure":        {"display_name": "沉默施压",   "max_uses": 2, "unlock_level": 10, "cost_time": 5},
+    "dual_interrogation":     {"display_name": "多人对质",   "max_uses": 1, "unlock_level": 15, "cost_time": 30},
+    "threat":                 {"display_name": "威胁",       "max_uses": 1, "unlock_level": 14, "cost_time": 0},
+    "psych_collapse":         {"display_name": "心理崩溃",   "max_uses": 1, "unlock_level": 18, "cost_time": 60},
 }
 ```
 
@@ -574,10 +665,16 @@ class ToolManager {
 
     _getDisplayName(name) {
         const names = {
-            psych_profile: '心理侧写', lie_detector: '测谎仪',
-            fake_evidence: '伪造证据', memory_recall: '记忆回溯',
-            silent_pressure: '沉默施压', dual_interrogation: '多人对质',
-            threat: '威胁', psych_collapse: '心理崩溃',
+            psych_profile_basic: '心理侧写（初级）',
+            psych_profile_advanced: '心理侧写（高级）',
+            psych_profile_master: '心理侧写（大师）',
+            lie_detector: '测谎仪',
+            fake_evidence: '伪造证据',
+            memory_recall: '记忆回溯',
+            silent_pressure: '沉默施压',
+            dual_interrogation: '多人对质',
+            threat: '威胁',
+            psych_collapse: '心理崩溃',
         };
         return names[name] || name;
     }
@@ -776,7 +873,7 @@ EXPERIENCE_CURVE: List[int] = [
 
 LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
     1:  {"tools": [], "evidence_uses": 3, "desc": "基础审讯"},
-    2:  {"tools": ["psych_profile"], "evidence_uses": 3, "desc": "心理侧写"},
+    2:  {"tools": ["psych_profile_basic"], "evidence_uses": 3, "desc": "初级心理侧写：可见 personality + fear"},
     3:  {"tools": [], "evidence_uses": 4, "desc": "证据次数+1"},
     4:  {"tools": ["lie_detector"], "evidence_uses": 4, "desc": "测谎仪"},
     5:  {"tools": [], "evidence_uses": 4, "desc": "普通难度解锁"},
@@ -784,12 +881,12 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
     7:  {"tools": [], "evidence_uses": 5, "desc": "施压/共情效果+50%"},
     8:  {"tools": ["memory_recall"], "evidence_uses": 5, "desc": "记忆回溯"},
     9:  {"tools": [], "evidence_uses": 5, "desc": "证据次数+1"},
-    10: {"tools": ["silent_pressure"], "evidence_uses": 5, "desc": "沉默施压，困难难度解锁"},
+    10: {"tools": ["psych_profile_advanced", "silent_pressure"], "evidence_uses": 5, "desc": "高级侧写：可见+defiance/empathy；沉默施压；困难难度解锁"},
     11: {"tools": [], "evidence_uses": 5, "desc": "审讯时间+30秒"},
     12: {"tools": [], "evidence_uses": 6, "desc": "初始压力降低10"},
     13: {"tools": [], "evidence_uses": 6, "desc": "证据次数+1"},
     14: {"tools": ["threat"], "evidence_uses": 6, "desc": "威胁"},
-    15: {"tools": ["dual_interrogation"], "evidence_uses": 6, "desc": "多人对质，噩梦难度解锁"},
+    15: {"tools": ["psych_profile_master", "dual_interrogation"], "evidence_uses": 6, "desc": "大师侧写：可见全部维度；多人对质；噩梦难度解锁"},
     16: {"tools": [], "evidence_uses": 7, "desc": "审讯时间+30秒"},
     17: {"tools": [], "evidence_uses": 7, "desc": "证据次数+1"},
     18: {"tools": ["psych_collapse"], "evidence_uses": 7, "desc": "心理崩溃"},
@@ -821,26 +918,32 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
 | 工具次数扣减 | 使用工具后次数正确减少 |
 | 工具次数耗尽 | 次数为 0 时无法使用 |
 | 各工具效果 | 每个工具的核心逻辑正确 |
-| 策略模式注册 | 工具注册表正确加载所有工具 |
+| 策略模式注册 | 工具注册表正确加载所有工具（含3个侧写） |
+| 三级侧写可见性 | 初级只显示 personality+fear，高级显示+defiance/empathy，大师显示全部 |
 | 等级经验计算 | 经验达到阈值时正确升级 |
-| 等级解锁 | 不同等级解锁对应工具 |
+| 等级解锁 | 不同等级解锁对应工具（含侧写三档） |
 | 数据库迁移 | v0->v1->v2 增量迁移正确 |
 | 存档兼容 | 工具状态和等级数据正确序列化/反序列化 |
 | psych_collapse 约束 | 验证不再直接修改 confession_level |
 | lie_detector 信息隔离 | 验证不传入 knowledge |
 | threat 压力驱动 | 验证 pressure>70 时沉默 |
+| dual_interrogation loyalty | 验证 pressure>loyalty 时泄露提示 |
+| 隐藏维度可见性 | 验证不同等级侧写工具解锁不同维度 |
 
 ---
 
 ## Phase 3 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.1 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | 工具架构 | 8个工具内嵌在引擎中 | 策略模式，各工具独立类 | P1：解耦，开闭原则 |
 | `psych_collapse` | 直接 `confession_level += 1` | 调用 `check_confession_upgrade` | P1：尊重升级约束 |
 | `lie_detector` | 传入嫌疑人 `knowledge` | 仅传入 `personality` | P2：避免信息泄露 |
 | `threat` | `random.random() < 0.3` | `pressure > 70` 时沉默 | P2：压力驱动替代随机 |
 | 数据库 | `CREATE TABLE IF NOT EXISTS` | 版本号 + 增量迁移 | P1：支持schema升级 |
-| Phase 3 拆分 | 单阶段 | 3a(工具引擎,6天)+3b(成长,5天) | P1：降低单阶段复杂度 |
+| Phase 3 拆分 | 单阶段 | 3a(工具引擎,7天)+3b(成长,5天) | P1：降低单阶段复杂度 |
+| 心理侧写 | 单一工具 psych_profile | 三级体系：basic/advanced/master | P1：对应隐藏维度可见性 |
+| 工具总数 | 8个 | 10个（3个侧写 + 7个其他） | 增强：侧写分级更精细 |
+| dual_interrogation | 无loyalty逻辑 | loyalty维度影响多人对质效果 | P1：维度指标参与机制 |
 
 (End of file - total 595 lines)

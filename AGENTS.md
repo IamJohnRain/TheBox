@@ -45,6 +45,22 @@ pre-commit run --all-files
 - PySide6 >= 6.5.0 required
 - Default provider: MiniMax (`DEFAULT_PROVIDER = "minimax"` in `core/providers.py`)
 
+## Virtual Environment
+
+**Must use uv virtual environment to run the project.**
+
+- Windows: `.winvenv`
+- Linux: `.venv`
+
+Activate before running:
+```bash
+# Windows
+.winvenv\Scripts\activate
+
+# Linux/macOS
+source .venv/bin/activate
+```
+
 ## Testing
 
 - Tests use `pytest` with `pytest-qt` for GUI testing

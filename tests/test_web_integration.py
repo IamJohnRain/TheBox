@@ -669,24 +669,26 @@ class TestWebMainWindowSaveLoad:
     """存档/读档测试。"""
 
     def test_save_game(self, qtbot, loaded_window):
-        """存档功能发射 show_dialog 信号。"""
-        with patch("core.db.save_full_session") as mock_save:
-            dialogs = []
-            loaded_window.bridge.show_dialog.connect(
-                lambda t, m: dialogs.append({"title": t, "message": m})
+        """存档功能发射 show_save_slots 信号。"""
+        with patch("core.db.list_all_slots", return_value=[
+            {"slot_number": 1, "session_id": None, "case_id": None, "saved_at": None, "empty": True},
+            {"slot_number": 2, "session_id": None, "case_id": None, "saved_at": None, "empty": True},
+        ]):
+            save_slots_data = []
+            loaded_window.bridge.show_save_slots.connect(
+                lambda d: save_slots_data.append(d)
             )
 
             loaded_window._on_save_game()
             qtbot.wait(100)
 
-            mock_save.assert_called_once()
-            assert len(dialogs) > 0
-            assert "存档成功" in dialogs[0]["title"]
+            assert len(save_slots_data) > 0
+            assert save_slots_data[0]["_hasActiveGame"] is True
 
     def test_save_game_failure(self, qtbot, loaded_window):
         """存档失败时显示错误对话框。"""
         with patch(
-            "core.db.save_full_session", side_effect=Exception("数据库错误")
+            "core.db.list_all_slots", side_effect=Exception("数据库错误")
         ):
             dialogs = []
             loaded_window.bridge.show_dialog.connect(
@@ -705,45 +707,48 @@ class TestWebMainWindowSaveLoad:
         # 不应崩溃
 
     def test_load_game_shows_save_list(self, qtbot, loaded_window):
-        """读档显示存档列表。"""
-        with patch("core.db.list_sessions", return_value=[]):
-            save_lists = []
-            loaded_window.bridge.show_save_list.connect(
-                lambda s: save_lists.append(s)
+        """读档显示存档槽位列表（同存档管理入口）。"""
+        with patch("core.db.list_all_slots", return_value=[
+            {"slot_number": 1, "session_id": None, "case_id": None, "saved_at": None, "empty": True},
+        ]):
+            save_slots_data = []
+            loaded_window.bridge.show_save_slots.connect(
+                lambda d: save_slots_data.append(d)
             )
 
             loaded_window._on_load_game()
             qtbot.wait(100)
 
-            assert len(save_lists) > 0
+            assert len(save_slots_data) > 0
 
     def test_load_game_with_sessions(self, qtbot, loaded_window):
         """读档时存档列表包含正确格式。"""
-        mock_sessions = [
+        mock_slots = [
             {
+                "slot_number": 1,
                 "session_id": "sess_001",
                 "case_id": "case_001",
                 "saved_at": "2026-01-01T00:00:00",
+                "empty": False,
             }
         ]
-        with patch("core.db.list_sessions", return_value=mock_sessions):
-            save_lists = []
-            loaded_window.bridge.show_save_list.connect(
-                lambda s: save_lists.append(s)
+        with patch("core.db.list_all_slots", return_value=mock_slots), \
+             patch("core.db.load_case", return_value={"title": "测试案件"}):
+            save_slots_data = []
+            loaded_window.bridge.show_save_slots.connect(
+                lambda d: save_slots_data.append(d)
             )
 
             loaded_window._on_load_game()
             qtbot.wait(100)
 
-            assert len(save_lists) > 0
-            assert save_lists[0][0]["session_id"] == "sess_001"
-            assert "name" in save_lists[0][0], "读档列表项应包含 'name' 字段"
-            assert "date" in save_lists[0][0], "读档列表项应包含 'date' 字段"
-            assert "summary" in save_lists[0][0], "读档列表项应包含 'summary' 字段"
+            assert len(save_slots_data) > 0
+            slots = save_slots_data[0]["slots"]
+            assert len(slots) > 0
 
     def test_load_game_failure(self, qtbot, loaded_window):
         """读档失败时显示错误对话框。"""
-        with patch("core.db.list_sessions", side_effect=Exception("读取失败")):
+        with patch("core.db.list_all_slots", side_effect=Exception("读取失败")):
             dialogs = []
             loaded_window.bridge.show_dialog.connect(
                 lambda t, m: dialogs.append({"title": t, "message": m})
@@ -753,7 +758,7 @@ class TestWebMainWindowSaveLoad:
             qtbot.wait(100)
 
             assert len(dialogs) > 0
-            assert "读档失败" in dialogs[0]["title"]
+            assert "存档失败" in dialogs[0]["title"]
 
     def test_save_selected_loads_session(self, qtbot, loaded_window, mock_case_simple):
         """选择存档后加载引擎。"""

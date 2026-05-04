@@ -1,6 +1,7 @@
-# Phase 4：评分与难度 — LLM 评分 + 难度分级（优化版 v1.1）
+# Phase 4：评分与难度 — 行为评分维度 + 错误惩罚 + LLM 评分 + 难度分级（优化版 v1.2）
 
-> **评审变更**：evidence_usage改为相关证据占比、best_grade数值映射、memory_summary截断、confession_depth非线性映射、难度解锁节奏说明
+> **评审变更**：evidence_usage改为相关证据占比、best_grade数值映射、memory_summary截断、confession_depth非线性映射、难度解锁节奏说明  
+> **v1.2 变更**：评分系统增加3个行为过程维度（施压精准度、证据精准度、错误惩罚），mistake_log数据联动评分
 
 ## 前置依赖
 
@@ -8,7 +9,7 @@ Phase 1-3 完成。
 
 ## 目标
 
-引入 LLM 驱动的多维评分系统和案件难度分级，完善游戏循环的反馈和长期目标。
+引入 LLM 驱动的多维评分系统（含行为过程统计）和案件难度分级，完善游戏循环的反馈和长期目标。
 
 ## 任务清单
 
@@ -40,11 +41,17 @@ logger = logging.getLogger(__name__)
 
 # 评分维度定义
 SCORING_DIMENSIONS = {
-    "confession_depth": {"weight": 0.30, "desc": "供词深度：最终供词层级"},
-    "time_efficiency": {"weight": 0.20, "desc": "时间效率：剩余时间占比"},
-    "evidence_usage": {"weight": 0.20, "desc": "证据利用：正确出示的相关证据占比"},
-    "interrogation_strategy": {"weight": 0.15, "desc": "审讯策略：工具使用、施压共情交替"},
-    "reasoning_accuracy": {"weight": 0.15, "desc": "推理准确：玩家推理与真相吻合度"},
+    # ── 结果维度 ──
+    "confession_depth": {"weight": 0.20, "desc": "供词深度：最终供词层级"},
+    "time_efficiency": {"weight": 0.10, "desc": "时间效率：剩余时间占比"},
+    "evidence_usage": {"weight": 0.10, "desc": "证据利用：正确出示的相关证据占比"},
+    # ── 行为过程维度（v1.2 新增） ──
+    "pressure_accuracy": {"weight": 0.15, "desc": "施压精准度：对真凶施压次数 / 总施压次数"},
+    "evidence_accuracy": {"weight": 0.15, "desc": "证据精准度：正确证据数 / 总出示证据数"},
+    "mistake_penalty": {"weight": 0.10, "desc": "错误惩罚：根据 mistake_log 扣分，0错=100，每错-15"},
+    # ── LLM 判断维度 ──
+    "interrogation_strategy": {"weight": 0.10, "desc": "审讯策略：工具使用、施压共情交替"},
+    "reasoning_accuracy": {"weight": 0.10, "desc": "推理准确：玩家推理与真相吻合度"},
 }
 
 # 评级阈值
@@ -108,6 +115,33 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
     confession_level = session_data.get("confession_level", 0)
     confession_score_map = {0: 15, 1: 40, 2: 65, 3: 85, 4: 100}
     scores["confession_depth"] = confession_score_map.get(confession_level, 0)
+
+    # ── 行为过程维度（v1.2 新增） ──
+
+    # 施压精准度：对真凶施压次数 / 总施压次数
+    pressure_count = session_data.get("pressure_count", 0)
+    pressure_on_culprit = session_data.get("pressure_on_culprit", 0)
+    if pressure_count > 0:
+        scores["pressure_accuracy"] = min(100, int((pressure_on_culprit / pressure_count) * 100))
+    else:
+        scores["pressure_accuracy"] = 50  # 没有施压不加分也不扣分
+
+    # 证据精准度：正确证据数 / 总出示证据数
+    correct_evidence = session_data.get("correct_evidence_count", 0)
+    total_evidence_presented = session_data.get("total_evidence_presented", 0)
+    if total_evidence_presented > 0:
+        scores["evidence_accuracy"] = min(100, int((correct_evidence / total_evidence_presented) * 100))
+    else:
+        scores["evidence_accuracy"] = 50
+
+    # 错误惩罚：根据 mistake_log 计算
+    mistake_log = session_data.get("mistake_log", [])
+    mistake_count = len(mistake_log)
+    innocent_breakdown = any(m.get("type") == "innocent_breakdown" for m in mistake_log)
+    mistake_score = max(0, 100 - mistake_count * 15)
+    if innocent_breakdown:
+        mistake_score = max(0, mistake_score - 30)  # 无辜崩溃额外扣30
+    scores["mistake_penalty"] = mistake_score
 
     # ── LLM 判断的维度 ──
 
@@ -220,6 +254,14 @@ def _handle_ending(self, state_event):
         for m in suspect.memory
     )
 
+    # 计算行为过程数据（v1.2 新增）
+    correct_evidence_count = sum(
+        1 for eid in self.engine.presented_evidence_ids
+        if self.engine._find_evidence(eid) and
+           self.engine._find_evidence(eid).get("related_suspect") == suspect.name
+    )
+    total_evidence_presented = len(self.engine.presented_evidence_ids)
+
     score_data = calculate_score({
         "truth": self.engine.case.get("truth", ""),
         "memory_summary": memory_summary,
@@ -230,6 +272,12 @@ def _handle_ending(self, state_event):
         "time_left": self.engine.time_left,
         "total_time": self.engine.case.get("interrogation_time_limit_sec", 300),
         "suspect_name": suspect.name,
+        "mistake_log": self.engine.mistake_log,
+        "correct_evidence_count": correct_evidence_count,
+        "total_evidence_presented": total_evidence_presented,
+        "pressure_count": self.engine.pressure_uses_remaining and
+            (PRESSURE_USES_PER_SUSPECT - self.engine.pressure_uses_remaining[self.engine.current_suspect_index]),
+        "pressure_on_culprit": 0,  # 需要从mistake_log反算
     })
 
     # 发送评分数据到前端
@@ -244,9 +292,26 @@ def _handle_ending(self, state_event):
     <div class="score-grade" id="score-grade">B</div>
     <div class="score-total" id="score-total">72分</div>
     <div class="score-dimensions">
-        <!-- 各维度分数条 -->
+        <div class="dim-group">
+            <h4>结果评估</h4>
+            <div class="dim-item" data-dim="confession_depth">供词深度</div>
+            <div class="dim-item" data-dim="time_efficiency">时间效率</div>
+            <div class="dim-item" data-dim="evidence_usage">证据利用</div>
+        </div>
+        <div class="dim-group">
+            <h4>行为评估</h4>
+            <div class="dim-item" data-dim="pressure_accuracy">施压精准度</div>
+            <div class="dim-item" data-dim="evidence_accuracy">证据精准度</div>
+            <div class="dim-item" data-dim="mistake_penalty">失误控制</div>
+        </div>
+        <div class="dim-group">
+            <h4>策略评估</h4>
+            <div class="dim-item" data-dim="interrogation_strategy">审讯策略</div>
+            <div class="dim-item" data-dim="reasoning_accuracy">推理准确</div>
+        </div>
     </div>
     <div class="score-detail" id="score-detail"></div>
+    <div class="score-mistakes" id="score-mistakes"></div>
     <div class="score-exp">
         <span>获得经验: </span><span id="score-exp">+72</span>
     </div>
@@ -375,6 +440,9 @@ function updateDifficultyOptions(playerLevel) {
 |------|------|
 | 规则维度计算 | 时间效率、证据利用（相关证据）、供词深度的分数正确 |
 | 证据利用基于相关证据 | 验证出示无关证据不计入分子 |
+| 施压精准度 | 对真凶施压 vs 对无辜施压，正确计算比例 |
+| 证据精准度 | 正确证据 vs 错误证据比例 |
+| 错误惩罚计算 | 0错=100，1错=85，2错=70，无辜崩溃额外-30 |
 | LLM 评分降级 | LLM 不可用时使用默认分数 50 |
 | 评级阈值 | 各分数段对应正确评级 |
 | 经验结算 | 经验计算和等级提升正确 |
@@ -382,17 +450,22 @@ function updateDifficultyOptions(playerLevel) {
 | 难度参数传递 | 不同难度生成不同参数的案件 |
 | 难度解锁 | 等级不足时难度选项不可选 |
 | memory_summary 截断 | 验证超长对话正确截断 |
+| 行为维度权重 | 验证8个维度权重之和为1.0 |
+| mistake_log 联动 | 验证 mistake_log 数据正确传入评分 |
 
 ---
 
 ## Phase 4 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.1 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | `evidence_usage` | 出示数/总证据数 | 出示数/相关证据数 | P1：更准确反映策略 |
 | `confession_depth` | `level * 25`（线性） | 非线性映射（0=15,1=40,2=65,3=85,4=100） | P2：缩小层级间差距 |
 | `best_grade` | 字符串比较 | 数值映射比较 | P2：支持未来扩展（SS等） |
 | `memory_summary` | 完整传入 | 截断至2000字符 | P2：控制token消耗 |
 | 难度解锁节奏 | 未说明 | 明确各阶段预计局数和时间 | 增强：帮助设计验证 |
+| 评分维度 | 5维（纯结果+LLM） | 8维（结果3+行为3+LLM2） | P0：增加行为过程统计 |
+| 错误惩罚 | 无 | mistake_log 联动评分 | P1：错误操作有后果 |
+| 评分面板 | 简单列表 | 分组展示（结果/行为/策略） | 增强：复盘信息更丰富 |
 
 (End of file - total 324 lines)

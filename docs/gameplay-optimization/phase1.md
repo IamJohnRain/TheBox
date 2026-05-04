@@ -1,10 +1,11 @@
-# Phase 1：基础重构 — 证据系统 + 供词层级（优化版 v1.1）
+# Phase 1：基础重构 — 证据系统 + 供词层级 + 恐惧值 + 多维隐藏指标 + 交互限制（优化版 v1.2）
 
-> **评审变更**：修复P0 `_postprocess`冲突、抽取`_call_llm()`、统一胜利入口`_check_victory()`、压力程序化计算、移除`requires_semantic`、game_config分阶段配置
+> **评审变更**：修复P0 `_postprocess`冲突、抽取`_call_llm()`、统一胜利入口`_check_victory()`、压力程序化计算、移除`requires_semantic`、game_config分阶段配置  
+> **v1.2 变更**：新增恐惧值系统、嫌疑人5维隐藏指标、施压/共情交互限制（混合方案）、聊天轮次限制
 
 ## 目标
 
-解决"点完证据就赢"的核心问题，引入供词层级系统作为新的胜负判定基础。
+解决"点完证据就赢"的核心问题，引入供词层级系统作为新的胜负判定基础，同时引入恐惧值和嫌疑人多维隐藏指标，增加个体差异和策略深度。
 
 ## 任务清单
 
@@ -18,8 +19,11 @@
 | 1.6 | 供词层级 UI | `ui/web/js/suspect.js`, `ui/web/index.html`, `ui/web/css/` | 中 |
 | 1.7 | 修复静态系统提示词 | `core/suspect_agent.py` | 小 |
 | 1.8 | 案件 Schema 扩展 | `core/case_generator.py` | 小 |
-| 1.9 | 存档兼容 | `core/interrogation.py`, `core/suspect_agent.py` | 小 |
-| 1.10 | 测试 | `tests/` | 中 |
+| 1.9 | 恐惧值系统 | `core/suspect_agent.py`, `core/interrogation.py`, `schemas/events.py` | 中 |
+| 1.10 | 嫌疑人多维隐藏指标 | `core/suspect_agent.py`, `core/case_generator.py`, `core/game_config.py` | 中 |
+| 1.11 | 施压/共情交互限制 | `core/interrogation.py`, `ui/web/js/`, `ui/web/index.html` | 中 |
+| 1.12 | 存档兼容 | `core/interrogation.py`, `core/suspect_agent.py` | 小 |
+| 1.13 | 测试 | `tests/` | 中 |
 
 ---
 
@@ -95,6 +99,65 @@ EVIDENCE_PRESSURE_BASE = {
 
 # 证据强度系数（乘以基础增量）
 EVIDENCE_STRENGTH_MULTIPLIER = 0.1  # strength 1-10，乘以 0.1 = 0.1-1.0
+
+# ──────────────────────────────────────────────
+# 恐惧值系统
+# ──────────────────────────────────────────────
+
+# 恐惧值默认
+DEFAULT_FEAR = 50  # 0-100
+
+# 恐惧对施压效果的影响系数
+# 实际压力增量 = 基础压力增量 × (fear / FEAR_NEUTRAL)
+FEAR_NEUTRAL = 50  # fear=50时效果正常
+
+# 错误证据出示的恐惧惩罚
+FEAR_PENALTY_WRONG_EVIDENCE = 10  # 出示错误证据 fear -= 10
+
+# ──────────────────────────────────────────────
+# 嫌疑人多维隐藏指标
+# ──────────────────────────────────────────────
+
+# 隐藏维度定义（各维度 0-100，不同性格/角色分配不同值）
+HIDDEN_DIMENSIONS = {
+    "fear":                  {"default": 50, "desc": "恐惧值：对审讯员的畏惧感，影响施压效果增益"},
+    "defiance":              {"default": 50, "desc": "抗压性：压力增长速率 = base / (1 + defiance × 0.01)"},
+    "empathy_susceptibility": {"default": 50, "desc": "共情易感性：共情效果倍率 = empathy / 50"},
+    "deception_skill":       {"default": 50, "desc": "欺骗技巧：反驳成功率加成"},
+    "loyalty":               {"default": 50, "desc": "忠诚度：对同伙的忠诚，多人对质时影响是否背叛"},
+}
+
+# 可见性等级（玩家等级 → 可见维度）
+DIMENSION_VISIBILITY = {
+    1:  ["pressure", "confession_level"],                                    # Lv.1-4: 基础可见
+    2:  ["pressure", "confession_level", "personality", "fear"],             # Lv.2+: 心理侧写(初级)
+    10: ["pressure", "confession_level", "personality", "fear",
+         "defiance", "empathy_susceptibility"],                              # Lv.10+: 高级侧写
+    15: ["pressure", "confession_level", "personality", "fear",
+         "defiance", "empathy_susceptibility", "deception_skill", "loyalty"], # Lv.15+: 大师侧写
+}
+
+# 性格类型 → 隐藏维度默认值映射
+PERSONALITY_DIMENSIONS = {
+    "冷静":  {"fear": 30, "defiance": 70, "empathy_susceptibility": 30, "deception_skill": 60, "loyalty": 50},
+    "暴躁":  {"fear": 60, "defiance": 30, "empathy_susceptibility": 50, "deception_skill": 20, "loyalty": 40},
+    "狡猾":  {"fear": 40, "defiance": 50, "empathy_susceptibility": 20, "deception_skill": 80, "loyalty": 30},
+    "胆小":  {"fear": 80, "defiance": 20, "empathy_susceptibility": 70, "deception_skill": 10, "loyalty": 60},
+    "固执":  {"fear": 35, "defiance": 80, "empathy_susceptibility": 15, "deception_skill": 30, "loyalty": 70},
+}
+
+# ──────────────────────────────────────────────
+# 交互限制
+# ──────────────────────────────────────────────
+
+# 每个嫌疑人的聊天轮次上限
+CHAT_TURNS_PER_SUSPECT = 10
+
+# 每个嫌疑人的施压次数上限
+PRESSURE_USES_PER_SUSPECT = 1
+
+# 每个嫌疑人的共情次数上限
+EMPATHY_USES_PER_SUSPECT = 1
 
 # ──────────────────────────────────────────────
 # Phase 2+ 配置预留（此处声明类型，值在对应 Phase 添加）
@@ -302,11 +365,24 @@ if action == "present_evidence":
     # 压力增量由引擎程序化计算（取代硬编码 +20 和 LLM 返回的 pressure_change）
     pressure_delta = 0
     if evidence.get("related_suspect") == suspect.name:
-        from core.game_config import EVIDENCE_PRESSURE_BASE, EVIDENCE_STRENGTH_MULTIPLIER
+        from core.game_config import EVIDENCE_PRESSURE_BASE, EVIDENCE_STRENGTH_MULTIPLIER, FEAR_NEUTRAL
         base = EVIDENCE_PRESSURE_BASE.get(evidence_type, 10)
         strength = evidence.get("strength", 5)
         pressure_delta = int(base * (1 + strength * EVIDENCE_STRENGTH_MULTIPLIER))
+        # 恐惧值影响施压效果
+        fear_multiplier = suspect.fear / FEAR_NEUTRAL
+        pressure_delta = int(pressure_delta * fear_multiplier)
         self.presented_evidence_ids.add(evidence_id)
+    else:
+        # 出示错误证据 → 恐惧下降 + 记录错误
+        from core.game_config import FEAR_PENALTY_WRONG_EVIDENCE
+        suspect.fear = max(0, suspect.fear - FEAR_PENALTY_WRONG_EVIDENCE)
+        self.mistake_log.append({
+            "type": "wrong_evidence",
+            "evidence_id": evidence_id,
+            "suspect_name": suspect.name,
+            "turn": suspect.turn_count,
+        })
 
     old_pressure = suspect.pressure
     suspect.pressure = max(0, min(100, suspect.pressure + pressure_delta))
@@ -868,37 +944,343 @@ def _get_system_message(self) -> dict:
 },
 ```
 
+在 `CASE_SCHEMA` 的 `suspects.items.properties` 中新增隐藏维度字段：
+
+```python
+"suspects": {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": ["name", "background", "knowledge", "forbidden_to_reveal"],
+        "properties": {
+            "name": {"type": "string"},
+            "background": {"type": "string"},
+            "knowledge": {"type": "string"},
+            "forbidden_to_reveal": {"type": "array", "items": {"type": "string"}},
+            "personality": {"type": "string"},
+            # 新增隐藏维度（可选，向后兼容）
+            "fear": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+            "defiance": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+            "empathy_susceptibility": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+            "deception_skill": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+            "loyalty": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+        },
+        "additionalProperties": False,
+    },
+},
+```
+
 修改生成提示词，在 evidences 部分增加：
 ```
 "type": "字符串，证据类型：physical(物证)/document(书证)/testimony(证言)",
 "strength": "整数1-10，证据强度，10为最强",
 ```
 
+修改生成提示词，在 suspects 部分增加：
+```
+"fear": "整数0-100，恐惧值，胆小性格80+，冷静性格20-40",
+"defiance": "整数0-100，抗压性，固执性格80+，胆小性格20-30",
+"empathy_susceptibility": "整数0-100，共情易感性，胆小/暴躁性格50+，狡猾性格20-30",
+"deception_skill": "整数0-100，欺骗技巧，狡猾性格80+，胆小/暴躁性格10-30",
+"loyalty": "整数0-100，对同伙的忠诚度，固执/胆小性格60+，狡猾性格20-40",
+```
+
 ---
 
-## 1.9 存档兼容
+## 1.9 恐惧值系统
+
+### 设计
+
+恐惧值(fear)是嫌疑人对审讯员的畏惧感指标，与压力值(pressure)交互：
+- **恐惧影响施压效果**：实际压力增量 = 基础压力增量 × (fear / 50)
+- **错误证据导致恐惧下降**：出示与当前嫌疑人无关的证据 → fear -= 10
+- **恐惧过低时施压效果极弱**：fear=10 时施压效果仅为正常的20%
+
+### 修改 `core/suspect_agent.py` — 新增恐惧值属性
+
+在 `__init__` 中新增:
+
+```python
+self.fear: int = suspect_data.get("fear", 50)
+```
+
+### 修改 `core/interrogation.py` — 错误证据恐惧惩罚
+
+已在 1.2.5 中实现（出示错误证据时 `suspect.fear -= FEAR_PENALTY_WRONG_EVIDENCE`）。
+
+### 新增事件类型
+
+**修改 `schemas/events.py`**:
+
+```python
+class FearUpdateEvent(TypedDict):
+    type: Literal["fear_update"]
+    suspect_index: int
+    fear: int
+    reason: str  # "wrong_evidence" / "pressure_success" / "natural_decay"
+
+# 更新 UIEvent 联合类型
+UIEvent = Union[
+    NewMessageEvent,
+    SuspectUpdateEvent,
+    StateChangeEvent,
+    TimerTickEvent,
+    ConfessionUpdateEvent,
+    FearUpdateEvent,  # 新增
+]
+```
+
+### 在 `submit_action` 中发送恐惧事件
+
+```python
+if old_fear != suspect.fear:
+    fear_event: FearUpdateEvent = {
+        "type": "fear_update",
+        "suspect_index": self.current_suspect_index,
+        "fear": suspect.fear,
+        "reason": "wrong_evidence" if suspect.fear < old_fear else "pressure_success",
+    }
+    events.append(fear_event)
+```
+
+### 新增 `InterrogationEngine` 属性
+
+在 `__init__` 中新增:
+
+```python
+self.mistake_log: List[dict] = []  # 错误操作记录
+```
+
+### 恐惧值 UI
+
+在嫌疑人卡片的压力条下方新增恐惧值显示：
+
+```html
+<div class="fear-section">
+    <div class="fear-label">
+        <span class="fear-title">恐惧值</span>
+        <span class="fear-value" id="fear-value">50</span>
+    </div>
+    <div class="fear-bar-container">
+        <div class="fear-bar" id="fear-bar" style="width: 50%;"></div>
+    </div>
+</div>
+```
+
+恐惧值条颜色：低恐惧(0-30)蓝色（冷静），中恐惧(30-70)黄色，高恐惧(70-100)红色。
+
+### 新增信号
+
+```python
+# web_bridge.py
+fear_update = Signal(int, int, str)  # suspect_index, fear_value, reason
+```
+
+---
+
+## 1.10 嫌疑人多维隐藏指标
+
+### 设计
+
+每个嫌疑人拥有5个隐藏心理维度，这些维度：
+- **影响游戏机制**：恐惧影响施压效果、抗压性影响压力增长速率、共情易感性影响共情效果等
+- **默认不可见**：玩家只能看到 pressure 和 confession_level
+- **按等级解锁可见**：使用心理侧写技能可逐步解锁（详见 Phase 3a 三级侧写体系）
+
+### 修改 `core/suspect_agent.py` — 新增隐藏维度属性
+
+在 `__init__` 中新增:
+
+```python
+self.defiance: int = suspect_data.get("defiance", 50)
+self.empathy_susceptibility: int = suspect_data.get("empathy_susceptibility", 50)
+self.deception_skill: int = suspect_data.get("deception_skill", 50)
+self.loyalty: int = suspect_data.get("loyalty", 50)
+```
+
+如果 `suspect_data` 中没有提供维度值，根据 `personality` 字段从 `PERSONALITY_DIMENSIONS` 查找默认值：
+
+```python
+from core.game_config import PERSONALITY_DIMENSIONS
+
+personality = suspect_data.get("personality", "")
+dim_defaults = PERSONALITY_DIMENSIONS.get(personality, {})
+
+self.fear = suspect_data.get("fear", dim_defaults.get("fear", 50))
+self.defiance = suspect_data.get("defiance", dim_defaults.get("defiance", 50))
+self.empathy_susceptibility = suspect_data.get("empathy_susceptibility", dim_defaults.get("empathy_susceptibility", 50))
+self.deception_skill = suspect_data.get("deception_skill", dim_defaults.get("deception_skill", 50))
+self.loyalty = suspect_data.get("loyalty", dim_defaults.get("loyalty", 50))
+```
+
+### 维度对游戏机制的影响
+
+| 维度 | 影响的机制 | 公式/规则 |
+|------|-----------|----------|
+| `fear` | 施压效果增益 | `实际压力增量 = 基础增量 × (fear / 50)` |
+| `defiance` | 压力增长速率 | `实际压力增量 = 基础增量 / (1 + defiance × 0.01)` |
+| `empathy_susceptibility` | 共情效果 | `共情压力减少 = 基础减少 × (empathy / 50)` （Phase 2 实现） |
+| `deception_skill` | 反驳成功率加成 | `rebuttal_believable` 判定时 `pressure_threshold -= deception_skill × 0.2` （Phase 2 实现） |
+| `loyalty` | 多人对质效果 | `pressure > loyalty` 时可能背叛同伙 （Phase 3a 实现） |
+
+**综合公式**（施压时）：
+
+```python
+# 证据出示的实际压力增量
+raw_delta = base * (1 + strength * STRENGTH_MULTIPLIER) + chain_bonus
+fear_factor = suspect.fear / FEAR_NEUTRAL
+defiance_factor = 1.0 / (1.0 + suspect.defiance * 0.01)
+pressure_delta = int(raw_delta * fear_factor * defiance_factor)
+```
+
+### 序列化
+
+```python
+# to_dict 中:
+{
+    "name": suspect.name,
+    "pressure": suspect.pressure,
+    "memory": suspect.memory,
+    "confession_level": suspect.confession_level,
+    "confession_progress": suspect.confession_progress,
+    "turn_count": suspect.turn_count,
+    "fear": suspect.fear,
+    "defiance": suspect.defiance,
+    "empathy_susceptibility": suspect.empathy_susceptibility,
+    "deception_skill": suspect.deception_skill,
+    "loyalty": suspect.loyalty,
+}
+
+# from_dict 中:
+engine.suspects[i].fear = suspect_state.get("fear", 50)
+engine.suspects[i].defiance = suspect_state.get("defiance", 50)
+engine.suspects[i].empathy_susceptibility = suspect_state.get("empathy_susceptibility", 50)
+engine.suspects[i].deception_skill = suspect_state.get("deception_skill", 50)
+engine.suspects[i].loyalty = suspect_state.get("loyalty", 50)
+```
+
+---
+
+## 1.11 施压/共情交互限制
+
+### 设计（混合方案）
+
+- **聊天轮次限制**：每个嫌疑人最多10轮对话，超过后该嫌疑人"拒绝再说话"
+- **施压限制**：每个嫌疑人只能施压1次
+- **共情限制**：每个嫌疑人只能共情1次
+
+### 修改 `core/interrogation.py` — 新增交互追踪
+
+在 `__init__` 中新增:
+
+```python
+from core.game_config import CHAT_TURNS_PER_SUSPECT, PRESSURE_USES_PER_SUSPECT, EMPATHY_USES_PER_SUSPECT
+
+# 每个嫌疑人的交互使用次数
+self.chat_turns_remaining: List[int] = [CHAT_TURNS_PER_SUSPECT] * len(self.suspects)
+self.pressure_uses_remaining: List[int] = [PRESSURE_USES_PER_SUSPECT] * len(self.suspects)
+self.empathy_uses_remaining: List[int] = [EMPATHY_USES_PER_SUSPECT] * len(self.suspects)
+```
+
+### 在 `submit_action` 中检查交互限制
+
+```python
+# 检查聊天轮次
+if self.chat_turns_remaining[self.current_suspect_index] <= 0:
+    events.append(self._system_message(
+        f"{suspect.name} 拒绝再和你说话了。"
+    ))
+    return events
+
+# 根据操作类型扣减对应次数
+if action == "pressure":
+    if self.pressure_uses_remaining[self.current_suspect_index] <= 0:
+        events.append(self._system_message(
+            f"你已经对 {suspect.name} 施压过了。"
+        ))
+        return events
+    self.pressure_uses_remaining[self.current_suspect_index] -= 1
+elif action == "empathy":
+    if self.empathy_uses_remaining[self.current_suspect_index] <= 0:
+        events.append(self._system_message(
+            f"你已经对 {suspect.name} 共情过了。"
+        ))
+        return events
+    self.empathy_uses_remaining[self.current_suspect_index] -= 1
+
+# 每次有效交互扣减聊天轮次
+self.chat_turns_remaining[self.current_suspect_index] -= 1
+```
+
+### 交互限制 UI
+
+在嫌疑人卡片中显示剩余交互次数：
+
+```html
+<div class="interaction-limits">
+    <span class="limit-badge" id="chat-remaining">💬 10</span>
+    <span class="limit-badge" id="pressure-remaining">👊 1</span>
+    <span class="limit-badge" id="empathy-remaining">🤝 1</span>
+</div>
+```
+
+当某个限制接近耗尽时（聊天剩余 ≤ 2），高亮警告。
+
+### 新增信号
+
+```python
+# web_bridge.py
+interaction_limits_update = Signal(int, int, int, int)  # suspect_index, chat, pressure, empathy
+```
+
+---
+
+## 1.12 存档兼容
 
 `to_dict()` / `from_dict()` 需要向后兼容旧存档（没有新字段时使用默认值）。
 
-已在 1.5.5 中通过 `.get("field", default)` 实现。
+已在 1.5.5 中通过 `.get("field", default)` 实现，1.10 中新增了隐藏维度的序列化。
 
 **特别注意**：
-- `SuspectAgent.__init__` 中的新字段（`confession_level`, `confession_progress`, `turn_count`）已设置默认值
+- `SuspectAgent.__init__` 中的新字段（`confession_level`, `confession_progress`, `turn_count`, `fear`, `defiance`, `empathy_susceptibility`, `deception_skill`, `loyalty`）已设置默认值
 - `InterrogationEngine.__init__` 中的 `evidence_uses_remaining` 已使用 `case_data.get("evidence_uses", DEFAULT_EVIDENCE_USES)`
 - 旧存档加载时，缺失的新字段会自动使用默认值
+- 交互限制字段（`chat_turns_remaining`, `pressure_uses_remaining`, `empathy_uses_remaining`）存档时需序列化，读档时恢复
+
+**新增序列化**：
+
+```python
+# to_dict 中:
+"chat_turns_remaining": self.chat_turns_remaining,
+"pressure_uses_remaining": self.pressure_uses_remaining,
+"empathy_uses_remaining": self.empathy_uses_remaining,
+"mistake_log": self.mistake_log,
+
+# from_dict 中:
+engine.chat_turns_remaining = state.get("chat_turns_remaining",
+    [CHAT_TURNS_PER_SUSPECT] * len(engine.suspects))
+engine.pressure_uses_remaining = state.get("pressure_uses_remaining",
+    [PRESSURE_USES_PER_SUSPECT] * len(engine.suspects))
+engine.empathy_uses_remaining = state.get("empathy_uses_remaining",
+    [EMPATHY_USES_PER_SUSPECT] * len(engine.suspects))
+engine.mistake_log = state.get("mistake_log", [])
+```
 
 ---
 
-## 1.10 测试计划
+## 1.13 测试计划
 
 ### 单元测试
 
 | 测试文件 | 测试内容 |
 |---------|---------|
 | `tests/test_confession.py` (新) | 供词层级升级逻辑、进度更新、阈值边界条件 |
-| `tests/test_evidence_rework.py` (新) | respond_evidence 不传证据名、证据次数限制、压力程序化计算 |
-| `tests/test_game_config.py` (新) | 配置值正确性、默认值 |
+| `tests/test_evidence_rework.py` (新) | respond_evidence 不传证据名、证据次数限制、压力程序化计算、恐惧系数 |
+| `tests/test_game_config.py` (新) | 配置值正确性、默认值、PERSONALITY_DIMENSIONS 映射 |
 | `tests/test_victory_conditions.py` (新) | `_check_victory` 各条件优先级、低供词层级拦截、高供词层级触发 |
+| `tests/test_fear_system.py` (新) | 恐惧值初始值、错误证据恐惧下降、恐惧系数影响施压效果 |
+| `tests/test_hidden_dimensions.py` (新) | 隐藏维度默认值、性格映射、综合压力公式 |
+| `tests/test_interaction_limits.py` (新) | 聊天轮次限制、施压/共情次数限制、耗尽后拒绝交互 |
 
 ### 集成测试
 
@@ -909,6 +1291,9 @@ def _get_system_message(self) -> dict:
 | 供词层级递进 | 模拟高压+多轮对话，验证层级升级 |
 | 存档/读档兼容 | 新字段序列化/反序列化正确，旧存档加载不崩溃 |
 | 压力动态更新 | 验证 `_get_system_message` 使用当前压力值 |
+| 恐惧-压力交互 | 出示错误证据→恐惧下降→后续施压效果减弱 |
+| 多维指标综合计算 | 验证 fear × defiance 综合影响压力增量 |
+| 交互限制耗尽 | 聊天10轮后嫌疑人拒绝，施压1次后不可再施压 |
 
 ### 回归测试
 
@@ -923,15 +1308,19 @@ def _get_system_message(self) -> dict:
 ## 实施顺序建议
 
 ```
-1.1  game_config.py（无依赖，先建，只放Phase 1配置）
+1.1  game_config.py（无依赖，先建，含恐惧、隐藏维度、交互限制配置）
     ↓
 1.2  _call_llm 抽取 + _get_system_message 动态化（基础改造）
     ↓
 1.7  修复静态提示词（与 1.2 同步做）
     ↓
-1.2  respond_evidence + 引擎重构（核心改动）
+1.10 嫌疑人多维隐藏指标（SuspectAgent 新属性，独立于 1.2）
+    ↓
+1.2  respond_evidence + 引擎重构（核心改动，含恐惧系数）
     ↓
 1.2  _postprocess 联动改造 + _check_victory 统一入口（P0修复）
+    ↓
+1.9  恐惧值系统（依赖 1.2 + 1.10）
     ↓
 1.3  证据次数限制（依赖 1.2）
     ↓
@@ -943,16 +1332,18 @@ def _get_system_message(self) -> dict:
     ↓
 1.6  供词 UI（依赖 1.5）
     ↓
-1.9  存档兼容（依赖 1.2 + 1.5）
+1.11 施压/共情交互限制（依赖 1.10 + 引擎改造）
     ↓
-1.10 测试（最后）
+1.12 存档兼容（依赖 1.2 + 1.5 + 1.9 + 1.10 + 1.11）
+    ↓
+1.13 测试（最后）
 ```
 
 ---
 
 ## Phase 1 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.1 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | `_postprocess` | 原样保留，触发即胜利 | 低供词层级拦截，>=3才触发 | P0：防止绕过供词系统 |
 | 压力来源 | LLM返回`pressure_change`+引擎硬编码+20 | 引擎程序化计算，LLM不返回 | P1：避免双重计算 |
@@ -960,5 +1351,9 @@ def _get_system_message(self) -> dict:
 | 胜利判定 | 分散在`submit_action`中 | 统一`_check_victory()`入口 | P1：避免双重判定 |
 | `requires_semantic` | 定义在阈值中但无实现 | Phase 1移除，Phase 2实现 | P1：避免未完成的功能 |
 | `game_config.py` | 包含Phase 1-4所有配置 | 仅Phase 1配置，后续分阶段添加 | P2：减少早期测试负担 |
+| 嫌疑人维度 | 仅 pressure/confession | 新增恐惧值+5维隐藏指标 | P0：增加个体差异和策略深度 |
+| 施压效果 | 固定公式计算 | fear × defiance 综合系数 | P0：恐惧影响施压，错误操作有惩罚 |
+| 交互限制 | 无限制 | 聊天10轮/人 + 施压1次/人 + 共情1次/人 | P0：避免无限试错 |
+| 错误操作 | 无惩罚 | fear-10 + mistake_log 记录 | P1：增加策略博弈 |
 
 (End of file - total 643 lines)

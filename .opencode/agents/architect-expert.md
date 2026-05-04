@@ -35,6 +35,7 @@ color: "#9C27B0"
 - 调用 @explore Agent 搜索代码库
 - 调度 @architect-a 和 @architect-b 执行评审任务
 - 输出评审报告到 `docs/` 目录（通过建议形式）
+- 基于评审结果输出优化后的方案到 `docs/` 目录
 
 ## 评审维度
 

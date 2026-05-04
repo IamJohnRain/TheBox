@@ -218,12 +218,12 @@ class TestKeyboardInAppJs:
         assert "requestSave" in nearby_text
 
     def test_ctrl_load_calls_bridge(self):
-        """Ctrl+L 调用 bridge.requestLoad。"""
+        """Ctrl+L 打开存档管理（与 Ctrl+S 相同入口）。"""
         content = _get_js_content("app.js")
         ctrl_l_pos = content.find("ctrl+l")
         assert ctrl_l_pos > 0, "ctrl+l not found in app.js"
         nearby_text = content[ctrl_l_pos:ctrl_l_pos + 200]
-        assert "requestLoad" in nearby_text
+        assert "requestSave" in nearby_text
 
     def test_escape_checks_modal_visible(self):
         """ESC 快捷键检查模态框可见性。"""

@@ -248,9 +248,11 @@ def _on_case_generated(self, case_dict):
 
 ### 3.5 Step 5: 为 overlay 增加合成层提升
 
-**文件**: `ui/web/css/components.css`
+> **⚠️ 已废弃** — `will-change: transform` 在 Qt WebEngine 中会强制创建 GPU 合成层，与频闪根因一致，不应使用。参见 `docs/ui-modal-evidence-bug-fix-plan-v2.md` 的修订说明和 Fix-A 修复方案，该方案已移除所有 `will-change`/`contain`/`backface-visibility` 合成层属性。
 
-```css
+~~**文件**: `ui/web/css/components.css`~~
+
+~~```css
 .loading-overlay {
     ...
     will-change: transform;
@@ -260,7 +262,7 @@ def _on_case_generated(self, case_dict):
     ...
     will-change: transform;
 }
-```
+```~~
 
 ---
 
@@ -308,8 +310,8 @@ def test_save_selected_no_double_clear(qtbot):
 1. **Step 1**: 优化 `switchSuspect()` 的 DOM 策略（核心修复，约 45min）
 2. **Step 2**: 删除冗余 `clear_chat`（简单，约 5min）
 3. **Step 3**: 修复 Modal transition（简单，约 5min）
-4. **Step 4**: 延迟加载案件（简单，约 10min）
-5. **Step 5**: 合成层提升（简单，约 5min）
+4. **Step 4**: 延迟加载案件（简单，约 10min）— 已由 `ui-modal-evidence-bug-fix-plan-v2.md` Fix-B 实施并扩展
+5. **Step 5**: ~~合成层提升~~ **已废弃**，参见 `docs/ui-modal-evidence-bug-fix-plan-v2.md`
 6. 验收测试（约 20min）
 
 建议 Step 1 完成后先手动测试，确认闪动消除后再做 Step 2-5。
