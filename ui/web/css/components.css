@@ -717,64 +717,6 @@ body.modal-open .typing-dot {
     animation-play-state: paused;
 }
 
-#gen-cancel-confirm {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 500;
-    display: none;
-    background: var(--color-bg-secondary);
-    border: 1px solid rgba(0, 245, 255, 0.2);
-    border-radius: var(--layout-border-radius-xl);
-    padding: var(--space-8);
-    min-width: 400px;
-    max-width: 90vw;
-    max-height: 90vh;
-    overflow-y: auto;
-}
-
-#gen-cancel-confirm .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: var(--space-6);
-}
-
-#gen-cancel-confirm .modal-title {
-    font-size: var(--font-size-xl);
-    font-weight: var(--font-weight-bold);
-    color: var(--color-accent-cyan);
-    text-shadow: var(--glow-cyan);
-}
-
-#gen-cancel-confirm .modal-close {
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--color-bg-card);
-    border-radius: 50%;
-    color: var(--color-text-secondary);
-    transition: background 150ms ease, color 150ms ease;
-}
-
-#gen-cancel-confirm .modal-close:hover {
-    background: var(--color-danger);
-    color: white;
-}
-
-#gen-cancel-confirm .modal-body {
-    margin-bottom: var(--space-6);
-}
-
-#gen-cancel-confirm .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-3);
-}
-
 .modal-body {
     color: var(--color-text-primary);
     line-height: var(--line-height-relaxed);

@@ -13,7 +13,6 @@ class ModalManager {
         this.closeBtn = document.getElementById('modal-close');
         this._confirmCallback = null;
         this._isGenerating = false;
-        this._genCancelConfirm = null;
         this._bindEvents();
     }
 
@@ -24,37 +23,6 @@ class ModalManager {
         this.backdrop.parentNode.insertBefore(wrapper, this.modal);
         wrapper.appendChild(this.modal);
         return wrapper;
-    }
-
-    _createGenCancelConfirm() {
-        const existing = document.getElementById('gen-cancel-confirm');
-        if (existing) return existing;
-
-        const confirm = document.createElement('div');
-        confirm.id = 'gen-cancel-confirm';
-        confirm.className = 'modal';
-        confirm.setAttribute('role', 'dialog');
-        confirm.setAttribute('aria-modal', 'true');
-        confirm.setAttribute('aria-labelledby', 'gen-cancel-confirm-title');
-        confirm.innerHTML = `
-            <header class="modal-header">
-                <h3 class="modal-title" id="gen-cancel-confirm-title">确认取消生成？</h3>
-                <button class="modal-close" id="gen-cancel-confirm-close" aria-label="关闭">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 6L6 18M6 6l12 12"/>
-                    </svg>
-                </button>
-            </header>
-            <div class="modal-body" id="gen-cancel-confirm-body">
-                <p>案件正在生成中，确定要取消吗？</p>
-            </div>
-            <footer class="modal-footer" id="gen-cancel-confirm-footer">
-                <button class="modal-btn modal-btn-primary" id="gen-cancel-confirm-ok">确认</button>
-                <button class="modal-btn modal-btn-secondary" id="gen-cancel-confirm-cancel">取消</button>
-            </footer>
-        `;
-        document.body.appendChild(confirm);
-        return confirm;
     }
 
     _bindEvents() {
@@ -70,15 +38,9 @@ class ModalManager {
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
-                    this._hideGenCancelConfirm(false);
-                    return;
-                }
-                if (this._isVisible()) {
-                    if (this._isGenerating) return;
-                    this.hide();
-                }
+            if (e.key === 'Escape' && this._isVisible()) {
+                if (this._isGenerating) return;
+                this.hide();
             }
         });
     }
@@ -92,56 +54,61 @@ class ModalManager {
     }
 
     _showGenCancelConfirm() {
-        this._genCancelConfirm = this._createGenCancelConfirm();
-        if (this.modal) {
-            this.modal.style.display = 'none';
-        }
-        if (this.backdrop) {
-            this.backdrop.style.display = 'none';
-        }
-        if (this.wrapper) {
-            this.wrapper.style.display = 'none';
-        }
-        this._genCancelConfirm.style.display = '';
+        this._savedGenTitle = this.titleEl ? this.titleEl.textContent : '';
+        this._savedGenBody = this.bodyEl ? this.bodyEl.innerHTML : '';
+        this._savedGenFooterClass = this.footerEl ? this.footerEl.className : '';
 
-        const closeBtn = document.getElementById('gen-cancel-confirm-close');
-        if (closeBtn) {
-            closeBtn.onclick = () => this._hideGenCancelConfirm(false);
-        }
+        if (this.titleEl) this.titleEl.textContent = '确认取消生成？';
+        if (this.bodyEl) this.bodyEl.innerHTML = '<p>案件正在生成中，确定要取消吗？</p>';
 
-        const okBtn = document.getElementById('gen-cancel-confirm-ok');
-        if (okBtn) {
-            okBtn.onclick = () => this._hideGenCancelConfirm(true);
-        }
+        if (this.footerEl) {
+            this.footerEl.innerHTML = '';
+            this.footerEl.className = 'modal-footer';
 
-        const cancelBtn = document.getElementById('gen-cancel-confirm-cancel');
-        if (cancelBtn) {
-            cancelBtn.onclick = () => this._hideGenCancelConfirm(false);
+            const confirmBtn = document.createElement('button');
+            confirmBtn.className = 'modal-btn modal-btn-primary';
+            confirmBtn.textContent = '确认';
+            confirmBtn.addEventListener('click', () => {
+                this._cancelGeneration();
+                this.hide();
+            });
+            this.footerEl.appendChild(confirmBtn);
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'modal-btn modal-btn-secondary';
+            cancelBtn.textContent = '取消';
+            cancelBtn.addEventListener('click', () => {
+                this._restoreGenContent();
+            });
+            this.footerEl.appendChild(cancelBtn);
         }
     }
 
-    _hideGenCancelConfirm(shouldCancel) {
-        if (shouldCancel) {
-            this._cancelGeneration();
+    _restoreGenContent() {
+        if (this._savedGenTitle && this.titleEl) {
+            this.titleEl.textContent = this._savedGenTitle;
         }
+        if (this._savedGenBody && this.bodyEl) {
+            this.bodyEl.innerHTML = this._savedGenBody;
+        }
+        if (this._savedGenFooterClass && this.footerEl) {
+            this.footerEl.className = this._savedGenFooterClass;
+            this.footerEl.innerHTML = '';
 
-        if (this._genCancelConfirm) {
-            this._genCancelConfirm.style.display = 'none';
-        }
+            const genBtn = document.createElement('button');
+            genBtn.className = 'modal-btn modal-btn-primary';
+            genBtn.textContent = '生成中...';
+            genBtn.disabled = true;
+            this.footerEl.appendChild(genBtn);
 
-        if (this.modal) {
-            this.modal.style.display = '';
-        }
-        if (this.backdrop) {
-            this.backdrop.style.display = '';
-        }
-        if (this.wrapper) {
-            this.wrapper.style.display = '';
-        }
-
-        if (shouldCancel) {
-            this._isGenerating = false;
-            this.hide();
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'modal-btn modal-btn-secondary';
+            cancelBtn.textContent = '取消';
+            cancelBtn.addEventListener('click', () => {
+                this._requestHide();
+                return false;
+            });
+            this.footerEl.appendChild(cancelBtn);
         }
     }
 
@@ -153,9 +120,6 @@ class ModalManager {
     }
 
     _isVisible() {
-        if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
-            return true;
-        }
         return this.modal && this.modal.classList.contains('active');
     }
 
@@ -621,7 +585,6 @@ class ModalManager {
     // ================================================================
 
     showGenerateCase() {
-        this._isGenerating = false;
         this._genSteps = [
             { emoji: '📐', text: '正在搭建虚拟世界框架...', status: 'pending' },
             { emoji: '🎬', text: '正在打造故事场景...', status: 'pending' },
@@ -912,10 +875,6 @@ class ModalManager {
         this._clearGenSubStepTimer();
         this._isGenerating = false;
 
-        if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
-            this._hideGenCancelConfirm(false);
-        }
-
         let errorType = 'unknown';
         try {
             const parsed = JSON.parse(errorJson);
@@ -1000,21 +959,6 @@ class ModalManager {
         }
         this._clearGenSubStepTimer();
         this._isGenerating = false;
-
-        if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
-            this._hideGenCancelConfirm(false);
-        }
-
-        const resultEl = document.getElementById('generate-result');
-        if (resultEl) {
-            const steps = this._genSteps || [];
-            const allDone = steps.every(s => s.status === 'done' || s.status === 'active');
-            if (!allDone && steps.length > 0) {
-                steps.forEach(s => { s.status = 'done'; });
-                resultEl.innerHTML = this._renderGenSteps();
-            }
-        }
-
         this.hide();
     }
 
@@ -1029,7 +973,6 @@ class ModalManager {
         }
         if (this.wrapper) this.wrapper.classList.remove('active');
         if (this.modal) this.modal.classList.remove('active');
-        this._isGenerating = false;
         this._confirmCallback = null;
         document.body.classList.remove('modal-open');
         if (window.timerManager) window.timerManager.flush();
