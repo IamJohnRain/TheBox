@@ -176,7 +176,7 @@ class TestNetworkErrorFallback:
         mock_llm.chat_completion.side_effect = NetworkError("连接失败")
         agent = _make_agent()
         result = agent.respond("你在哪里？")
-        assert result["reply"] == "（嫌疑人沉默不语）"
+        assert result["reply"] == "（对方沉默不语）"
         assert result["pressure_change"] == 0
 
     @patch("core.suspect_agent.llm_client")
@@ -185,7 +185,7 @@ class TestNetworkErrorFallback:
         mock_llm.chat_completion.side_effect = LLMResponseError("调用失败")
         agent = _make_agent()
         result = agent.respond("说说看？")
-        assert result["reply"] == "（嫌疑人沉默不语）"
+        assert result["reply"] == "（对方沉默不语）"
         assert result["pressure_change"] == 0
 
 

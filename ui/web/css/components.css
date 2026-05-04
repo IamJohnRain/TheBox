@@ -987,3 +987,190 @@
         opacity: 1;
     }
 }
+
+
+/* ==========================================================================
+   Case Generation Progress Steps
+   ========================================================================== */
+
+.gen-progress {
+    text-align: left;
+    margin: var(--space-3) 0;
+}
+
+.gen-step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+}
+
+.gen-step-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.gen-step-done {
+    color: var(--color-success);
+    font-weight: 700;
+    background: rgba(46, 204, 113, 0.15);
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+}
+
+.gen-step-active {
+    animation: gen-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes gen-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.15); }
+}
+
+.gen-step-pending {
+    color: var(--color-text-muted);
+}
+
+.gen-step-text {
+    flex: 1;
+}
+
+.gen-step-text-done {
+    color: var(--color-text-secondary);
+    text-decoration: line-through;
+    text-decoration-color: var(--color-text-muted);
+}
+
+.gen-step-text-active {
+    color: var(--color-accent-cyan);
+    font-weight: 600;
+    border-right: 2px solid var(--color-accent-cyan);
+    padding-right: 4px;
+    animation: gen-cursor-blink 0.8s step-end infinite;
+}
+
+@keyframes gen-cursor-blink {
+    0%, 100% { border-right-color: var(--color-accent-cyan); }
+    50% { border-right-color: transparent; }
+}
+
+.gen-step-text-pending {
+    color: var(--color-text-muted);
+    opacity: 0.5;
+}
+
+.gen-progress-bar {
+    height: 3px;
+    background: var(--color-bg-card);
+    border-radius: 2px;
+    margin-top: var(--space-3);
+    overflow: hidden;
+}
+
+.gen-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-accent-cyan), var(--color-accent-purple));
+    border-radius: 2px;
+    transition: width 0.5s ease;
+}
+
+
+/* ==========================================================================
+   Case Generation Error Card
+   ========================================================================== */
+
+.gen-error-card {
+    text-align: center;
+    padding: var(--space-4);
+    background: rgba(255, 71, 87, 0.06);
+    border: 1px solid rgba(255, 71, 87, 0.2);
+    border-radius: var(--radius-md);
+    margin: var(--space-3) 0;
+}
+
+.gen-error-icon {
+    font-size: 2rem;
+    margin-bottom: var(--space-2);
+}
+
+.gen-error-title {
+    font-size: var(--font-size-md);
+    font-weight: 700;
+    color: var(--color-danger);
+    margin-bottom: var(--space-2);
+}
+
+.gen-error-desc {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-3);
+}
+
+.gen-error-tips {
+    text-align: left;
+    list-style: none;
+    padding: 0;
+    margin: var(--space-2) 0 var(--space-3) 0;
+}
+
+.gen-error-tips li {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    padding: var(--space-1) 0;
+    padding-left: var(--space-4);
+    position: relative;
+}
+
+.gen-error-tips li::before {
+    content: '💡';
+    position: absolute;
+    left: 0;
+}
+
+.gen-error-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: var(--space-3);
+}
+
+.gen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+}
+
+.gen-btn:hover {
+    border-color: var(--color-accent-cyan);
+    background: rgba(0, 245, 255, 0.08);
+}
+
+.gen-btn-safe {
+    border-color: rgba(0, 245, 255, 0.4);
+    background: rgba(0, 245, 255, 0.1);
+    color: var(--color-accent-cyan);
+}
+
+.gen-btn-safe:hover {
+    background: rgba(0, 245, 255, 0.2);
+    border-color: var(--color-accent-cyan);
+}

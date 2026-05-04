@@ -130,6 +130,56 @@ class ModalManager {
         ]);
     }
 
+    showCaseBriefing(data) {
+        const title = data.title || '案件资料';
+        const victim = data.victim || '未知';
+        const causeOfDeath = data.causeOfDeath || '未知';
+        const crimeScene = data.crimeScene || '未知';
+        const suspects = data.suspects || [];
+
+        let suspectsHtml = '';
+        suspects.forEach((s) => {
+            suspectsHtml += `
+                <div class="briefing-suspect-card" style="
+                    background: rgba(0, 245, 255, 0.05);
+                    border: 1px solid var(--color-border);
+                    border-radius: var(--radius-md);
+                    padding: var(--space-3);
+                    margin-bottom: var(--space-3);
+                ">
+                    <div style="font-weight: 600; color: var(--color-accent-cyan); margin-bottom: var(--space-1);">
+                        ${this._escapeHtml(s.name || '未知')}
+                    </div>
+                    <div style="color: var(--color-text-secondary); font-size: 0.9em; margin-bottom: var(--space-1);">
+                        身份：${this._escapeHtml(s.role || '未知')}
+                    </div>
+                    <div style="color: var(--color-text-secondary); font-size: 0.9em;">
+                        性格：${this._escapeHtml(s.personality || '未知')}
+                    </div>
+                </div>
+            `;
+        });
+
+        const bodyHtml = `
+            <div class="case-briefing">
+                <div style="text-align:left; margin-bottom: var(--space-4);">
+                    <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">案件背景</h4>
+                    <p><strong>受害者：</strong>${this._escapeHtml(victim)}</p>
+                    <p><strong>死因：</strong>${this._escapeHtml(causeOfDeath)}</p>
+                    <p><strong>犯罪现场：</strong>${this._escapeHtml(crimeScene)}</p>
+                </div>
+                <div style="text-align:left;">
+                    <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">审讯对象资料</h4>
+                    ${suspectsHtml || '<p class="text-muted">暂无嫌疑人资料</p>'}
+                </div>
+            </div>
+        `;
+
+        this._show(title, bodyHtml, [
+            { text: '开始审讯', class: 'modal-btn-primary', callback: null },
+        ]);
+    }
+
     showReviewReport(reviewData) {
         const score = reviewData.score || 0;
         const scoreClass = score >= 70 ? 'success' : score >= 40 ? 'warning' : 'failure';
@@ -144,6 +194,21 @@ class ModalManager {
         (reviewData.suggestions || []).forEach((s) => {
             suggestionsHtml += `<li>${this._escapeHtml(s)}</li>`;
         });
+
+        // 案件真相区域
+        let truthHtml = '';
+        const caseTruth = reviewData.caseTruth;
+        if (caseTruth) {
+            truthHtml = `
+                <div style="text-align:left; margin: var(--space-4) 0; padding: var(--space-4); background: rgba(0, 245, 255, 0.05); border-radius: var(--radius-md); border: 1px solid var(--color-border);">
+                    <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">案件真相</h4>
+                    <p><strong>受害者：</strong>${this._escapeHtml(caseTruth.victim || '')}</p>
+                    <p><strong>死因：</strong>${this._escapeHtml(caseTruth.causeOfDeath || '')}</p>
+                    <p><strong>犯罪现场：</strong>${this._escapeHtml(caseTruth.crimeScene || '')}</p>
+                    <p style="margin-top: var(--space-2);"><strong>完整真相：</strong>${this._escapeHtml(caseTruth.truth || '')}</p>
+                </div>
+            `;
+        }
 
         const bodyHtml = `
             <div class="result-modal">
@@ -162,6 +227,7 @@ class ModalManager {
                     <h4 style="margin-bottom: var(--space-2); color: var(--color-accent-cyan);">改进建议</h4>
                     <ul style="padding-left: var(--space-6);">${suggestionsHtml || '<li>无</li>'}</ul>
                 </div>
+                ${truthHtml}
             </div>
         `;
 
@@ -347,6 +413,17 @@ class ModalManager {
     // ================================================================
 
     showGenerateCase() {
+        this._genSteps = [
+            { emoji: '📐', text: '正在搭建虚拟世界框架...', status: 'pending' },
+            { emoji: '🎬', text: '正在打造故事场景...', status: 'pending' },
+            { emoji: '🧠', text: '正在与 AI 构思案件...', status: 'pending' },
+            { emoji: '🔍', text: '正在编织线索与谜题...', status: 'pending' },
+            { emoji: '⚖️', text: '正在校验逻辑自洽性...', status: 'pending' },
+            { emoji: '✅', text: '案件世界构建完成！', status: 'pending' },
+        ];
+        this._genCurrentStep = -1;
+        this._genTypewriterTimer = null;
+
         const bodyHtml = `
             <div class="modal-form">
                 <div class="form-group">
@@ -365,14 +442,14 @@ class ModalManager {
 
         this._show('生成新案件', bodyHtml, [
             { text: '生成', class: 'modal-btn-primary', callback: () => {
-                this._onGenerateCase();
+                this._onGenerateCase(false);
                 return false;
             }},
             { text: '取消', class: 'modal-btn-secondary', callback: null },
         ]);
     }
 
-    _onGenerateCase() {
+    _onGenerateCase(safeMode) {
         const story = document.getElementById('generate-story')?.value?.trim() || '';
         const model = document.getElementById('generate-model')?.value?.trim() || '';
 
@@ -384,8 +461,9 @@ class ModalManager {
             return;
         }
 
+        this._resetGenSteps();
         if (resultEl) {
-            resultEl.innerHTML = '<span class="form-result-pending">正在生成案件，请耐心等待...</span>';
+            resultEl.innerHTML = this._renderGenSteps();
         }
 
         const generateBtn = this.footerEl?.querySelector('.modal-btn-primary');
@@ -400,22 +478,222 @@ class ModalManager {
         if (modelEl) modelEl.disabled = true;
 
         if (window.bridge) {
-            window.bridge.submitCaseGeneration(story, model);
+            if (safeMode) {
+                window.bridge.submitCaseGenerationSafe(story, model);
+            } else {
+                window.bridge.submitCaseGeneration(story, model);
+            }
         }
+    }
+
+    _resetGenSteps() {
+        this._genSteps.forEach((s) => { s.status = 'pending'; });
+        this._genCurrentStep = -1;
+    }
+
+    _matchStepIndex(message) {
+        const mapping = [
+            { pattern: '搭建虚拟世界框架', index: 0 },
+            { pattern: '打造故事场景', index: 1 },
+            { pattern: '安全创作模式', index: 1 },
+            { pattern: '构思案件', index: 2 },
+            { pattern: '编织线索', index: 3 },
+            { pattern: '校验逻辑', index: 4 },
+            { pattern: '构建完成', index: 5 },
+        ];
+        for (const m of mapping) {
+            if (message.includes(m.pattern)) return m.index;
+        }
+        return -1;
+    }
+
+    _renderGenSteps() {
+        let html = '<div class="gen-progress">';
+        this._genSteps.forEach((step, i) => {
+            let icon = '';
+            let textClass = '';
+            if (step.status === 'done') {
+                icon = '<span class="gen-step-icon gen-step-done">✓</span>';
+                textClass = 'gen-step-text-done';
+            } else if (step.status === 'active') {
+                icon = `<span class="gen-step-icon gen-step-active">${step.emoji}</span>`;
+                textClass = 'gen-step-text-active';
+            } else {
+                icon = '<span class="gen-step-icon gen-step-pending">○</span>';
+                textClass = 'gen-step-text-pending';
+            }
+            html += `<div class="gen-step ${step.status}">${icon}<span class="gen-step-text ${textClass}" id="gen-step-text-${i}">${step.status === 'active' ? '' : this._escapeHtml(step.text)}</span></div>`;
+        });
+        html += '</div>';
+
+        const progress = this._genCurrentStep >= 0
+            ? Math.min(100, Math.round(((this._genCurrentStep + 0.5) / this._genSteps.length) * 100))
+            : 0;
+        html += `<div class="gen-progress-bar"><div class="gen-progress-fill" style="width:${progress}%"></div></div>`;
+        return html;
+    }
+
+    _typewriterEffect(elementId, text, speed) {
+        if (this._genTypewriterTimer) {
+            clearInterval(this._genTypewriterTimer);
+            this._genTypewriterTimer = null;
+        }
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        let idx = 0;
+        el.innerHTML = '';
+        this._genTypewriterTimer = setInterval(() => {
+            if (idx < text.length) {
+                el.textContent = text.substring(0, idx + 1);
+                idx++;
+            } else {
+                clearInterval(this._genTypewriterTimer);
+                this._genTypewriterTimer = null;
+            }
+        }, speed || 40);
     }
 
     updateGenerationProgress(message) {
+        const stepIdx = this._matchStepIndex(message);
+        if (stepIdx < 0) return;
+
+        if (stepIdx <= this._genCurrentStep) return;
+
+        if (this._genCurrentStep >= 0) {
+            this._genSteps[this._genCurrentStep].status = 'done';
+        }
+        this._genSteps[stepIdx].status = 'active';
+        this._genCurrentStep = stepIdx;
+
         const resultEl = document.getElementById('generate-result');
         if (resultEl) {
-            resultEl.innerHTML = `<span class="form-result-pending">${this._escapeHtml(message)}</span>`;
+            resultEl.innerHTML = this._renderGenSteps();
+            if (this._genSteps[stepIdx].status === 'active') {
+                this._typewriterEffect(`gen-step-text-${stepIdx}`, this._genSteps[stepIdx].text, 40);
+            }
         }
     }
 
-    updateGenerationError(errorMessage) {
+    _ERROR_CONFIGS = {
+        content_filter: {
+            icon: '🛡️',
+            title: 'AI 安全审查触发了警报',
+            desc: '你的背景故事可能包含敏感内容，试试这些修改建议：',
+            tips: [
+                '避免直接描述暴力场景，用推理小说风格描述',
+                '将"被谋杀"改为"离奇离世"',
+                '将"凶器"改为"关键物证"',
+                '用"神秘事件"代替"犯罪案件"',
+            ],
+            showSafeBtn: true,
+        },
+        json_parse: {
+            icon: '🧩',
+            title: 'AI 返回了无法理解的格式',
+            desc: 'AI 生成复杂内容时偶尔会出错，再试一次通常能成功。',
+            tips: [],
+            showSafeBtn: false,
+        },
+        schema: {
+            icon: '🔍',
+            title: '案件逻辑校验未通过',
+            desc: 'AI 生成的案件结构不完整，再试一次吧。',
+            tips: [],
+            showSafeBtn: false,
+        },
+        network: {
+            icon: '📡',
+            title: '网络连接似乎不太稳定',
+            desc: '请检查网络后重试。',
+            tips: [],
+            showSafeBtn: false,
+        },
+        empty: {
+            icon: '📝',
+            title: '背景故事不能为空',
+            desc: '请输入一段背景故事来生成案件。',
+            tips: [],
+            showSafeBtn: false,
+        },
+        unknown: {
+            icon: '⚠️',
+            title: '案件生成遇到了意外状况',
+            desc: '请稍后重试，或尝试修改背景故事内容。',
+            tips: [],
+            showSafeBtn: false,
+        },
+    };
+
+    updateGenerationError(errorJson) {
+        if (this._genTypewriterTimer) {
+            clearInterval(this._genTypewriterTimer);
+            this._genTypewriterTimer = null;
+        }
+
+        let errorType = 'unknown';
+        try {
+            const parsed = JSON.parse(errorJson);
+            errorType = parsed.type || 'unknown';
+        } catch (e) {
+            // fallback: try to guess from raw string
+            if (errorJson.includes('sensitive') || errorJson.includes('422')) {
+                errorType = 'content_filter';
+            } else if (errorJson.includes('JSON') || errorJson.includes('json')) {
+                errorType = 'json_parse';
+            }
+        }
+
+        const config = this._ERROR_CONFIGS[errorType] || this._ERROR_CONFIGS.unknown;
+
+        let tipsHtml = '';
+        if (config.tips && config.tips.length > 0) {
+            tipsHtml = '<ul class="gen-error-tips">';
+            config.tips.forEach((tip) => {
+                tipsHtml += `<li>${this._escapeHtml(tip)}</li>`;
+            });
+            tipsHtml += '</ul>';
+        }
+
+        let actionsHtml = '<div class="gen-error-actions">';
+        if (config.showSafeBtn) {
+            actionsHtml += '<button class="gen-btn gen-btn-safe" id="gen-btn-safe">🛡️ 用安全模式重试</button>';
+        }
+        actionsHtml += '<button class="gen-btn gen-btn-retry" id="gen-btn-retry">🔄 重新生成</button>';
+        actionsHtml += '<button class="gen-btn gen-btn-edit" id="gen-btn-edit">✏️ 修改故事</button>';
+        actionsHtml += '</div>';
+
         const resultEl = document.getElementById('generate-result');
         if (resultEl) {
-            resultEl.innerHTML = `<span class="form-result-error">${this._escapeHtml(errorMessage)}</span>`;
+            resultEl.innerHTML = `
+                <div class="gen-error-card">
+                    <div class="gen-error-icon">${config.icon}</div>
+                    <div class="gen-error-title">${this._escapeHtml(config.title)}</div>
+                    <div class="gen-error-desc">${this._escapeHtml(config.desc)}</div>
+                    ${tipsHtml}
+                    ${actionsHtml}
+                </div>
+            `;
         }
+
+        const safeBtn = document.getElementById('gen-btn-safe');
+        if (safeBtn) {
+            safeBtn.addEventListener('click', () => { this._onGenerateCase(true); });
+        }
+
+        const retryBtn = document.getElementById('gen-btn-retry');
+        if (retryBtn) {
+            retryBtn.addEventListener('click', () => { this._onGenerateCase(false); });
+        }
+
+        const editBtn = document.getElementById('gen-btn-edit');
+        if (editBtn) {
+            editBtn.addEventListener('click', () => { this._enableGenForm(); });
+        }
+    }
+
+    _enableGenForm() {
+        const resultEl = document.getElementById('generate-result');
+        if (resultEl) resultEl.innerHTML = '';
 
         const generateBtn = this.footerEl?.querySelector('.modal-btn-primary');
         if (generateBtn) {
@@ -430,6 +708,10 @@ class ModalManager {
     }
 
     updateGenerationComplete() {
+        if (this._genTypewriterTimer) {
+            clearInterval(this._genTypewriterTimer);
+            this._genTypewriterTimer = null;
+        }
         this.hide();
     }
 

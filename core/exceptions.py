@@ -20,3 +20,7 @@ class ValidationError(TheBoxError):
 
 class ConfigError(TheBoxError):
     pass
+
+
+class ContentFilterError(TheBoxError):
+    pass

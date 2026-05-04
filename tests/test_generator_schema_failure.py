@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from core.case_generator import generate_case
-from core.exceptions import LLMResponseError, ValidationError
+from core.exceptions import ContentFilterError, LLMResponseError, ValidationError
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +287,134 @@ class TestGenerateCaseThinkBlock:
 
         with pytest.raises(ValidationError, match="案件生成失败"):
             generate_case("测试背景", max_retries=0)
+
+
+class TestGenerateCaseContentFilter:
+    """Scenario 6: LLM triggers content filter (422 UnprocessableEntityError).
+
+    When the primary prompt triggers a ContentFilterError, generate_case
+    should switch to the safe prompt and retry. If the safe prompt also
+    triggers the filter, it should raise ValidationError.
+    """
+
+    @patch("core.case_generator.LLMClient")
+    def test_content_filter_switches_to_safe_prompt(self, MockLLMClient):
+        """When the first call triggers ContentFilterError, the second call
+        uses the safe prompt and succeeds."""
+        mock_client = MagicMock()
+        mock_client.is_initialized = True
+        mock_client.chat_completion.side_effect = [
+            ContentFilterError("output new_sensitive (1027)"),
+            json.dumps(VALID_CASE_DICT, ensure_ascii=False),
+        ]
+        MockLLMClient.return_value = mock_client
+
+        result = generate_case("测试背景", max_retries=1)
+        assert isinstance(result, dict)
+        assert result["case_id"] == "gen_test_001"
+        assert mock_client.chat_completion.call_count == 2
+
+    @patch("core.case_generator.LLMClient")
+    def test_safe_prompt_also_filtered_raises_validation_error(self, MockLLMClient):
+        """When both prompts trigger ContentFilterError, generate_case
+        should raise ValidationError."""
+        mock_client = MagicMock()
+        mock_client.is_initialized = True
+        mock_client.chat_completion.side_effect = ContentFilterError("output new_sensitive (1027)")
+        MockLLMClient.return_value = mock_client
+
+        with pytest.raises(ValidationError, match="案件生成失败"):
+            generate_case("测试背景", max_retries=1)
+
+    @patch("core.case_generator.LLMClient")
+    def test_safe_prompt_uses_different_system_message(self, MockLLMClient):
+        """Verify that after ContentFilterError, the second call uses a
+        different (safe) system prompt."""
+        mock_client = MagicMock()
+        mock_client.is_initialized = True
+        mock_client.chat_completion.side_effect = [
+            ContentFilterError("sensitive"),
+            json.dumps(VALID_CASE_DICT, ensure_ascii=False),
+        ]
+        MockLLMClient.return_value = mock_client
+
+        generate_case("测试背景", max_retries=1)
+
+        calls = mock_client.chat_completion.call_args_list
+        first_messages = calls[0][1]["messages"]
+        second_messages = calls[1][1]["messages"]
+        assert first_messages[0]["role"] == "system"
+        assert second_messages[0]["role"] == "system"
+        assert first_messages[0]["content"] != second_messages[0]["content"]
+
+
+class TestGenerateCaseProgressCallback:
+    """Scenario 7: progress_callback is called at each stage."""
+
+    @patch("core.case_generator.LLMClient")
+    def test_progress_callback_called_on_success(self, MockLLMClient):
+        """progress_callback should be called at each stage during successful generation."""
+        mock_client = _make_mock_llm_client(json.dumps(VALID_CASE_DICT, ensure_ascii=False))
+        MockLLMClient.return_value = mock_client
+
+        progress_messages = []
+        generate_case("测试背景", max_retries=0, progress_callback=progress_messages.append)
+
+        assert any("打造故事场景" in m for m in progress_messages)
+        assert any("构思案件" in m for m in progress_messages)
+        assert any("编织线索" in m for m in progress_messages)
+        assert any("校验逻辑" in m for m in progress_messages)
+        assert any("构建完成" in m for m in progress_messages)
+
+    @patch("core.case_generator.LLMClient")
+    def test_progress_callback_none_by_default(self, MockLLMClient):
+        """generate_case should work without progress_callback (default None)."""
+        mock_client = _make_mock_llm_client(json.dumps(VALID_CASE_DICT, ensure_ascii=False))
+        MockLLMClient.return_value = mock_client
+
+        result = generate_case("测试背景", max_retries=0)
+        assert result["case_id"] == "gen_test_001"
+
+    @patch("core.case_generator.LLMClient")
+    def test_progress_callback_content_filter_switch(self, MockLLMClient):
+        """progress_callback should receive safe mode message on ContentFilterError."""
+        mock_client = MagicMock()
+        mock_client.is_initialized = True
+        mock_client.chat_completion.side_effect = [
+            ContentFilterError("sensitive"),
+            json.dumps(VALID_CASE_DICT, ensure_ascii=False),
+        ]
+        MockLLMClient.return_value = mock_client
+
+        progress_messages = []
+        generate_case("测试背景", max_retries=1, progress_callback=progress_messages.append)
+
+        assert any("安全创作模式" in m for m in progress_messages)
+
+
+class TestGenerateCaseSafeMode:
+    """Scenario 8: safe_mode=True forces safe prompt from the start."""
+
+    @patch("core.case_generator.LLMClient")
+    def test_safe_mode_uses_safe_prompt(self, MockLLMClient):
+        """When safe_mode=True, the first call should use the safe prompt."""
+        mock_client = _make_mock_llm_client(json.dumps(VALID_CASE_DICT, ensure_ascii=False))
+        MockLLMClient.return_value = mock_client
+
+        generate_case("测试背景", max_retries=0, safe_mode=True)
+
+        call_kwargs = mock_client.chat_completion.call_args
+        messages = call_kwargs[1]["messages"] if "messages" in call_kwargs[1] else call_kwargs[0][0]
+        system_content = messages[0]["content"]
+        assert "逻辑谜题" in system_content or "逻辑推理解谜" in system_content
+
+    @patch("core.case_generator.LLMClient")
+    def test_safe_mode_progress_shows_safe_message(self, MockLLMClient):
+        """When safe_mode=True, progress should show safe creation mode message."""
+        mock_client = _make_mock_llm_client(json.dumps(VALID_CASE_DICT, ensure_ascii=False))
+        MockLLMClient.return_value = mock_client
+
+        progress_messages = []
+        generate_case("测试背景", max_retries=0, safe_mode=True, progress_callback=progress_messages.append)
+
+        assert any("安全创作模式" in m for m in progress_messages)

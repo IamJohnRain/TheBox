@@ -91,6 +91,21 @@
                 chatManager.setTitle(state.caseTitle);
             }
 
+            // 缓存案件资料，供随时查看
+            if (state.caseBackground || state.suspectProfiles) {
+                window._cachedCaseBriefing = {
+                    title: state.caseBackground?.title || state.caseTitle || '案件资料',
+                    victim: state.caseBackground?.victim || '',
+                    causeOfDeath: state.caseBackground?.causeOfDeath || '',
+                    crimeScene: state.caseBackground?.crimeScene || '',
+                    suspects: (state.suspectProfiles || []).map((p) => ({
+                        name: p.name || '',
+                        role: p.role || '',
+                        personality: p.personality || '',
+                    })),
+                };
+            }
+
             // loadSuspects 已自动 selectSuspect(0)，这里只需切换聊天上下文
             const idx = state.current_suspect_index || 0;
             if (state.suspects && state.suspects[idx]) {
@@ -229,6 +244,12 @@
             if (!data || !data.data) return;
             modalManager.showReviewReport(data.data);
         });
+
+        // 案件资料展示
+        bridge.on('showCaseBriefing', (data) => {
+            if (!data || !data.data) return;
+            modalManager.showCaseBriefing(data.data);
+        });
     }
 
     // ================================================================
@@ -236,6 +257,14 @@
     // ================================================================
 
     function bindUIEvents() {
+        bindButton('btn-case-briefing', () => {
+            if (window._cachedCaseBriefing) {
+                modalManager.showCaseBriefing(window._cachedCaseBriefing);
+            } else if (window.bridge) {
+                window.bridge.requestCaseBriefing();
+            }
+        });
+
         bindButton('btn-generate', () => {
             if (window.bridge) window.bridge.requestGenerateCase();
         });

@@ -36,6 +36,8 @@ class TestWebBridgeSignals:
             "return_to_menu_requested",
             "review_requested",
             "show_review",
+            "case_briefing_requested",
+            "show_case_briefing",
         ]
         for signal_name in expected_signals:
             assert hasattr(bridge, signal_name), f"Missing signal: {signal_name}"
@@ -151,6 +153,12 @@ class TestWebBridgeSlots:
         with qtbot.waitSignal(bridge.review_requested, timeout=1000):
             bridge.requestReview()
 
+    def test_request_case_briefing_emits_signal(self, qtbot):
+        """requestCaseBriefing 发射 case_briefing_requested 信号。"""
+        bridge = WebBridge()
+        with qtbot.waitSignal(bridge.case_briefing_requested, timeout=1000):
+            bridge.requestCaseBriefing()
+
     def test_set_game_interactive_signal_exists(self):
         """set_game_interactive 信号定义。"""
         bridge = WebBridge()
@@ -160,6 +168,11 @@ class TestWebBridgeSlots:
         """show_review 信号定义。"""
         bridge = WebBridge()
         assert hasattr(bridge, "show_review")
+
+    def test_show_case_briefing_signal_exists(self):
+        """show_case_briefing 信号定义。"""
+        bridge = WebBridge()
+        assert hasattr(bridge, "show_case_briefing")
 
 
 class TestWebBridgeSlotEdgeCases:

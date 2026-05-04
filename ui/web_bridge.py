@@ -28,6 +28,7 @@ class WebBridge(QObject):
     submit_settings_requested = Signal(str, str, str, str)
     test_connection_requested = Signal(str, str, str)
     submit_case_generation_requested = Signal(str, str)
+    submit_case_generation_safe_requested = Signal(str, str)
     cancel_case_generation_requested = Signal()
 
     # === Python → JS 信号 ===
@@ -59,6 +60,10 @@ class WebBridge(QObject):
     show_ending_dialog = Signal(str, str)  # title, message
     restart_requested = Signal()
     return_to_menu_requested = Signal()
+
+    # 案件资料
+    case_briefing_requested = Signal()
+    show_case_briefing = Signal(dict)  # case_briefing_data
 
     # 复盘相关
     review_requested = Signal()
@@ -157,6 +162,11 @@ class WebBridge(QObject):
         """提交案件生成请求。"""
         self.submit_case_generation_requested.emit(background, model)
 
+    @Slot(str, str)
+    def submitCaseGenerationSafe(self, background: str, model: str):
+        """提交安全模式案件生成请求。"""
+        self.submit_case_generation_safe_requested.emit(background, model)
+
     @Slot()
     def cancelCaseGeneration(self):
         """取消案件生成。"""
@@ -166,3 +176,8 @@ class WebBridge(QObject):
     def requestReview(self):
         """请求复盘报告。"""
         self.review_requested.emit()
+
+    @Slot()
+    def requestCaseBriefing(self):
+        """请求查看案件资料。"""
+        self.case_briefing_requested.emit()

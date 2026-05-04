@@ -42,11 +42,11 @@ def generate_review(engine_state: dict, case_data: dict) -> Optional[dict]:
             f"- {name}: 压力值 {pressure}/100, 对话轮数 {memory_count // 2}"
         )
 
-    prompt = f"""你是一名审讯专家，请对以下审讯过程进行复盘和打分。
+    prompt = f"""你是一名虚构推理解谜游戏的复盘专家，请对以下游戏过程进行复盘和打分。这是一个类似剧本杀的智力游戏。
 
 ## 案件信息
 案件名称: {case_title}
-案件结果: {"破案成功（嫌疑人认罪）" if state == "breakdown" else "审讯失败（时间耗尽）"}
+游戏结果: {"解谜成功（关键人物透露真相）" if state == "breakdown" else "解谜失败（时间耗尽）"}
 
 ## 审讯统计
 - 总审讯时间: {time_total}秒
@@ -68,7 +68,7 @@ def generate_review(engine_state: dict, case_data: dict) -> Optional[dict]:
     messages = [
         {
             "role": "system",
-            "content": "你是一名资深审讯专家和培训教官，擅长分析审讯策略并给出专业评价。请以JSON格式输出评价结果。",
+            "content": "你是一名资深推理解谜游戏复盘专家，擅长分析游戏策略并给出专业评价。请以JSON格式输出评价结果。",
         },
         {"role": "user", "content": prompt},
     ]
@@ -106,8 +106,8 @@ def _fallback_review(engine_state: dict, case_data: dict) -> dict:
     return {
         "score": score,
         "strategy_analysis": "（自动评价）"
-        + ("成功突破嫌疑人心理防线。" if state == "breakdown" else "未能突破嫌疑人心理防线。"),
+        + ("成功突破了对方的心理防线。" if state == "breakdown" else "未能突破对方的心理防线。"),
         "key_moments": ["审讯结束"],
         "suggestions": ["（需要 LLM 生成详细建议）"],
-        "verdict": "破案成功" if state == "breakdown" else "审讯失败",
+        "verdict": "解谜成功" if state == "breakdown" else "解谜失败",
     }

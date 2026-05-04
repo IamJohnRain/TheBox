@@ -158,6 +158,10 @@ class WebBridge {
             this._trigger('showReview', { data });
         });
 
+        this.pythonBridge.show_case_briefing.connect((data) => {
+            this._trigger('showCaseBriefing', { data });
+        });
+
         console.log('[WebBridge] Signal listeners setup complete');
     }
 
@@ -293,6 +297,12 @@ class WebBridge {
         }
     }
 
+    submitCaseGenerationSafe(background, model) {
+        if (this.pythonBridge) {
+            this.pythonBridge.submitCaseGenerationSafe(background, model);
+        }
+    }
+
     cancelCaseGeneration() {
         if (this.pythonBridge) {
             this.pythonBridge.cancelCaseGeneration();
@@ -302,6 +312,12 @@ class WebBridge {
     requestReview() {
         if (this.pythonBridge) {
             this.pythonBridge.requestReview();
+        }
+    }
+
+    requestCaseBriefing() {
+        if (this.pythonBridge) {
+            this.pythonBridge.requestCaseBriefing();
         }
     }
 }

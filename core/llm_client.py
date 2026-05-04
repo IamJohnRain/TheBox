@@ -6,7 +6,7 @@ import openai
 from openai import OpenAI
 
 from core.config import get_api_key, get_base_url, get_model, get_provider
-from core.exceptions import ConfigError, LLMResponseError, NetworkError
+from core.exceptions import ConfigError, ContentFilterError, LLMResponseError, NetworkError
 
 logger = logging.getLogger("thebox")
 
@@ -97,6 +97,12 @@ class LLMClient:
             except openai.BadRequestError as e:
                 logger.error(f"请求参数错误: {e}")
                 raise LLMResponseError("请求格式有误") from e
+            except openai.UnprocessableEntityError as e:
+                err_msg = str(e)
+                logger.warning(f"内容过滤触发(422): {err_msg}")
+                if "sensitive" in err_msg.lower() or "422" in err_msg:
+                    raise ContentFilterError(f"LLM 输出被内容安全过滤: {err_msg}") from e
+                raise LLMResponseError(f"LLM 调用失败(422): {err_msg}") from e
             except Exception as e:
                 logger.exception(f"未知错误: {e}")
                 raise LLMResponseError(f"LLM 调用失败: {str(e)}") from e

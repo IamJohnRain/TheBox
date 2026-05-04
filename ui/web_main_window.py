@@ -4,6 +4,7 @@
 LLM 后台调用、游戏结局处理等。
 """
 
+import json
 import logging
 import uuid
 from typing import Optional
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import QMainWindow
 
 from core import db
 from core.config import get_api_key, get_settings, save_settings
+from core.exceptions import ContentFilterError
 from core.interrogation import InterrogationEngine
 from core.providers import get_provider_list, get_provider_models
 from ui.web_bridge import WebBridge
@@ -92,10 +94,11 @@ class CaseGenerateWorker(QThread):
     error = Signal(str)
     progress = Signal(str)
 
-    def __init__(self, background, model_override=None):
+    def __init__(self, background, model_override=None, safe_mode=False):
         super().__init__()
         self._background = background
         self._model_override = model_override
+        self._safe_mode = safe_mode
         self._interrupted = False
 
     def interrupt(self):
@@ -103,7 +106,6 @@ class CaseGenerateWorker(QThread):
 
     def run(self):
         try:
-            self.progress.emit("正在初始化 LLM...")
             if self._model_override:
                 from core.llm_client import LLMClient
 
@@ -112,12 +114,19 @@ class CaseGenerateWorker(QThread):
                     client.initialize()
                 client.set_model(self._model_override)
 
-            self.progress.emit("正在生成案件，请稍候...")
             from core.case_generator import generate_case
 
-            case_dict = generate_case(self._background)
+            case_dict = generate_case(
+                self._background,
+                progress_callback=lambda msg: self.progress.emit(msg),
+                safe_mode=self._safe_mode,
+            )
             if not self._interrupted:
                 self.finished.emit(case_dict)
+        except ContentFilterError as exc:
+            if not self._interrupted:
+                logger.error(f"案件生成失败(内容过滤): {exc}")
+                self.error.emit(f"CONTENT_FILTER:{str(exc)}")
         except Exception as exc:
             if not self._interrupted:
                 logger.error(f"案件生成失败: {exc}")
@@ -205,10 +214,38 @@ class WebMainWindow(QMainWindow):
         self.bridge.submit_case_generation_requested.connect(
             self._on_submit_case_generation
         )
+        self.bridge.submit_case_generation_safe_requested.connect(
+            self._on_submit_case_generation_safe
+        )
         self.bridge.cancel_case_generation_requested.connect(
             self._on_cancel_case_generation
         )
         self.bridge.review_requested.connect(self._on_review_requested)
+        self.bridge.case_briefing_requested.connect(self._on_case_briefing_requested)
+
+    def _emit_case_briefing(self, case_data):
+        """发送案件资料到前端。"""
+        briefing = {
+            "title": case_data.get("title", ""),
+            "victim": case_data.get("victim", ""),
+            "causeOfDeath": case_data.get("cause_of_death", ""),
+            "crimeScene": case_data.get("crime_scene", ""),
+            "suspects": [
+                {
+                    "name": s.get("name", ""),
+                    "role": s.get("role", ""),
+                    "personality": s.get("personality", ""),
+                }
+                for s in case_data.get("suspects", [])
+            ],
+        }
+        self.bridge.show_case_briefing.emit(briefing)
+
+    def _on_case_briefing_requested(self):
+        """处理前端请求查看案件资料。"""
+        if self.engine is None:
+            return
+        self._emit_case_briefing(self.engine.case)
 
     def load_case(self, case_data):
         """加载案件到引擎并更新 UI。"""
@@ -235,11 +272,28 @@ class WebMainWindow(QMainWindow):
             "state": self.engine.state,
             "case_id": case_data.get("case_id", ""),
             "caseTitle": case_data.get("title", ""),
+            "caseBackground": {
+                "title": case_data.get("title", ""),
+                "victim": case_data.get("victim", ""),
+                "causeOfDeath": case_data.get("cause_of_death", ""),
+                "crimeScene": case_data.get("crime_scene", ""),
+            },
+            "suspectProfiles": [
+                {
+                    "name": s.get("name", ""),
+                    "role": s.get("role", ""),
+                    "personality": s.get("personality", ""),
+                }
+                for s in case_data.get("suspects", [])
+            ],
         }
 
         self.bridge.init_game_state.emit(state)
         self.bridge.set_input_enabled.emit(True)
         self.bridge.set_game_interactive.emit(True)
+
+        # 自动弹出案件资料
+        self._emit_case_briefing(case_data)
 
         if self.engine.suspects:
             self._on_suspect_changed(0)
@@ -463,6 +517,18 @@ class WebMainWindow(QMainWindow):
         """复盘报告生成成功。"""
         self._review_worker = None
         self.bridge.hide_loading.emit()
+
+        # 将案件真相追加到复盘数据中
+        if self.engine is not None:
+            case_data = self.engine.case
+            review_data["caseTruth"] = {
+                "title": case_data.get("title", ""),
+                "victim": case_data.get("victim", ""),
+                "causeOfDeath": case_data.get("cause_of_death", ""),
+                "crimeScene": case_data.get("crime_scene", ""),
+                "truth": case_data.get("truth", ""),
+            }
+
         self.bridge.show_review.emit(review_data)
 
     def _on_review_error(self, error_msg):
@@ -561,22 +627,26 @@ class WebMainWindow(QMainWindow):
         logger.info("请求生成新案件")
         self.bridge.show_generate_modal.emit()
 
-    def _on_submit_case_generation(self, background, model):
+    def _on_submit_case_generation(self, background, model, safe_mode=False):
         """在后台线程中生成案件。"""
         if self._case_gen_worker and self._case_gen_worker.isRunning():
             return
 
         if not background.strip():
-            self.bridge.case_generation_error.emit("背景故事不能为空")
+            self.bridge.case_generation_error.emit('{"type":"empty","raw":"背景故事不能为空"}')
             return
 
         self._case_gen_worker = CaseGenerateWorker(
-            background, model.strip() or None
+            background, model.strip() or None, safe_mode=safe_mode
         )
         self._case_gen_worker.finished.connect(self._on_case_generated)
         self._case_gen_worker.error.connect(self._on_case_generation_error)
         self._case_gen_worker.progress.connect(self._on_case_generation_progress)
         self._case_gen_worker.start()
+
+    def _on_submit_case_generation_safe(self, background, model):
+        """在后台线程中用安全模式生成案件。"""
+        self._on_submit_case_generation(background, model, safe_mode=True)
 
     def _on_case_generated(self, case_dict):
         """案件生成成功。"""
@@ -588,7 +658,18 @@ class WebMainWindow(QMainWindow):
 
     def _on_case_generation_error(self, error_msg):
         """案件生成失败。"""
-        self.bridge.case_generation_error.emit(f"案件生成失败: {error_msg}")
+        if error_msg.startswith("CONTENT_FILTER:"):
+            raw = error_msg[len("CONTENT_FILTER:"):]
+            error_json = '{"type":"content_filter","raw":' + json.dumps(raw, ensure_ascii=False) + '}'
+        elif "JSON" in error_msg or "json" in error_msg or "解析" in error_msg:
+            error_json = '{"type":"json_parse","raw":' + json.dumps(error_msg, ensure_ascii=False) + '}'
+        elif "Schema" in error_msg or "校验" in error_msg or "schema" in error_msg.lower():
+            error_json = '{"type":"schema","raw":' + json.dumps(error_msg, ensure_ascii=False) + '}'
+        elif "网络" in error_msg or "Network" in error_msg or "连接" in error_msg:
+            error_json = '{"type":"network","raw":' + json.dumps(error_msg, ensure_ascii=False) + '}'
+        else:
+            error_json = '{"type":"unknown","raw":' + json.dumps(error_msg, ensure_ascii=False) + '}'
+        self.bridge.case_generation_error.emit(error_json)
         self._case_gen_worker = None
 
     def _on_case_generation_progress(self, status_msg):
@@ -705,6 +786,20 @@ class WebMainWindow(QMainWindow):
                 "state": self.engine.state,
                 "case_id": case_id,
                 "caseTitle": case_data.get("title", ""),
+                "caseBackground": {
+                    "title": case_data.get("title", ""),
+                    "victim": case_data.get("victim", ""),
+                    "causeOfDeath": case_data.get("cause_of_death", ""),
+                    "crimeScene": case_data.get("crime_scene", ""),
+                },
+                "suspectProfiles": [
+                    {
+                        "name": s.get("name", ""),
+                        "role": s.get("role", ""),
+                        "personality": s.get("personality", ""),
+                    }
+                    for s in case_data.get("suspects", [])
+                ],
             }
 
             self.bridge.init_game_state.emit(state)

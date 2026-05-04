@@ -165,6 +165,67 @@ class TestWebMainWindowCaseLoading:
             window.load_case(mock_case_simple)
         assert window.engine.time_left == mock_case_simple["interrogation_time_limit_sec"]
 
+    def test_init_game_state_contains_case_background(
+        self, qtbot, window, mock_case_simple
+    ):
+        """init_game_state 信号包含案件背景信息。"""
+        received_state = {}
+
+        def on_state(state):
+            received_state.update(state)
+
+        window.bridge.init_game_state.connect(on_state)
+
+        with patch("core.suspect_agent.llm_client"):
+            window.load_case(mock_case_simple)
+        qtbot.wait(100)
+
+        assert "caseBackground" in received_state
+        bg = received_state["caseBackground"]
+        assert bg["victim"] == mock_case_simple["victim"]
+        assert bg["causeOfDeath"] == mock_case_simple["cause_of_death"]
+        assert bg["crimeScene"] == mock_case_simple["crime_scene"]
+
+    def test_init_game_state_contains_suspect_profiles(
+        self, qtbot, window, mock_case_simple
+    ):
+        """init_game_state 信号包含审讯对象资料。"""
+        received_state = {}
+
+        def on_state(state):
+            received_state.update(state)
+
+        window.bridge.init_game_state.connect(on_state)
+
+        with patch("core.suspect_agent.llm_client"):
+            window.load_case(mock_case_simple)
+        qtbot.wait(100)
+
+        assert "suspectProfiles" in received_state
+        profiles = received_state["suspectProfiles"]
+        assert len(profiles) == len(mock_case_simple["suspects"])
+        for i, profile in enumerate(profiles):
+            assert profile["name"] == mock_case_simple["suspects"][i]["name"]
+            assert profile["role"] == mock_case_simple["suspects"][i]["role"]
+            assert profile["personality"] == mock_case_simple["suspects"][i]["personality"]
+
+    def test_load_case_emits_show_case_briefing(self, qtbot, window, mock_case_simple):
+        """加载案件后自动发射 show_case_briefing 信号。"""
+        briefings = []
+
+        def on_briefing(data):
+            briefings.append(data)
+
+        window.bridge.show_case_briefing.connect(on_briefing)
+
+        with patch("core.suspect_agent.llm_client"):
+            window.load_case(mock_case_simple)
+        qtbot.wait(100)
+
+        assert len(briefings) > 0
+        assert briefings[0]["title"] == mock_case_simple["title"]
+        assert briefings[0]["victim"] == mock_case_simple["victim"]
+
 
 # ─── 聊天功能测试 ───
 

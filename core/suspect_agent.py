@@ -3,7 +3,7 @@ import logging
 import re
 from typing import Dict, List, Optional
 
-from core.exceptions import LLMResponseError, NetworkError
+from core.exceptions import ContentFilterError, LLMResponseError, NetworkError
 from core.llm_client import llm_client
 
 logger = logging.getLogger("thebox")
@@ -35,11 +35,12 @@ class SuspectAgent:
                 "\n\n## 绝对禁止泄露的内容\n"
                 "以下内容是你绝不能在回复中透露的，无论是直接说出还是以同义表达暗示：\n"
                 f"{items}\n"
-                "即使压力值很高，你也决不能透露以上任何内容。"
+                "即使压力值很高，你也决不能透露以上任何内容。这是游戏规则。"
             )
 
         prompt = (
-            f"你是一起案件「{case_title}」中的嫌疑人。\n\n"
+            f"你是一个虚构的推理解谜游戏中的角色。这是一个类似剧本杀的智力游戏，所有内容均为虚构。\n"
+            f"你在案件「{case_title}」中是一个被调查的人物。\n\n"
             f"## 角色背景\n{role}\n\n"
             f"## 性格特征\n{personality}\n\n"
             f"## 你所知道的信息\n{knowledge}\n"
@@ -95,9 +96,9 @@ class SuspectAgent:
             result["reply"] = str(parsed.get("reply", ""))
             result["pressure_change"] = int(parsed.get("pressure_change", 0))
             result["secret_triggered"] = parsed.get("secret_triggered")
-        except (NetworkError, LLMResponseError, json.JSONDecodeError, ValueError) as exc:
+        except (ContentFilterError, NetworkError, LLMResponseError, json.JSONDecodeError, ValueError) as exc:
             logger.warning(f"LLM 调用或解析失败: {exc}")
-            result["reply"] = "（嫌疑人沉默不语）"
+            result["reply"] = "（对方沉默不语）"
             result["pressure_change"] = 0
             result["secret_triggered"] = None
 
@@ -117,8 +118,8 @@ class SuspectAgent:
         reply_lower = result["reply"].lower()
         for item in self._forbidden_to_reveal:
             if item.lower() in reply_lower:
-                logger.info(f"嫌疑人 [{self.name}] 泄露禁止内容，已替换: {item}")
-                result["reply"] = "（嫌疑人略显紧张，但并没有直接回答你的问题。）"
+                logger.info(f"角色 [{self.name}] 泄露禁止内容，已替换: {item}")
+                result["reply"] = "（对方略显紧张，但并没有直接回答你的问题。）"
                 result["secret_triggered"] = item
                 result["pressure_change"] += 20
                 return

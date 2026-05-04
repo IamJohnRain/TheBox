@@ -2,6 +2,7 @@ import pytest
 
 from core.exceptions import (
     ConfigError,
+    ContentFilterError,
     DatabaseError,
     LLMResponseError,
     NetworkError,
@@ -16,6 +17,7 @@ def test_exception_hierarchy():
     assert issubclass(DatabaseError, TheBoxError)
     assert issubclass(ValidationError, TheBoxError)
     assert issubclass(ConfigError, TheBoxError)
+    assert issubclass(ContentFilterError, TheBoxError)
 
 
 def test_thebox_error_is_exception():
@@ -27,3 +29,5 @@ def test_exceptions_can_be_raised():
         raise NetworkError("test")
     with pytest.raises(TheBoxError):
         raise ConfigError("test")
+    with pytest.raises(TheBoxError):
+        raise ContentFilterError("test")
