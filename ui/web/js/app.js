@@ -20,6 +20,11 @@
         bindUIEvents();
         initBridge();
 
+        setTimeout(() => {
+            const navbar = document.querySelector('.navbar');
+            if (navbar) navbar.classList.add('blurred');
+        }, 1000);
+
         console.log('[App] Initialization complete');
     }
 
@@ -63,13 +68,28 @@
         const bridge = window.bridge;
         if (!bridge) return;
 
+        function rafThrottle(fn) {
+            let pending = false;
+            let lastArg = null;
+            return (arg) => {
+                lastArg = arg;
+                if (!pending) {
+                    pending = true;
+                    requestAnimationFrame(() => {
+                        fn(lastArg);
+                        pending = false;
+                    });
+                }
+            };
+        }
+
         // 游戏状态初始化
         bridge.on('initGameState', (data) => {
             if (!data || !data.state) return;
             const state = data.state;
 
             if (state.suspects) {
-                suspectManager.loadSuspects(state.suspects);  // loadSuspects 内部已自动选中第一个
+                suspectManager.loadSuspects(state.suspects);
             }
 
             if (state.evidences) {
@@ -91,7 +111,6 @@
                 chatManager.setTitle(state.caseTitle);
             }
 
-            // 缓存案件资料，供随时查看
             if (state.caseBackground || state.suspectProfiles) {
                 window._cachedCaseBriefing = {
                     title: state.caseBackground?.title || state.caseTitle || '案件资料',
@@ -106,27 +125,94 @@
                 };
             }
 
-            // loadSuspects 已自动 selectSuspect(0)，这里只需切换聊天上下文
             const idx = state.current_suspect_index || 0;
             if (state.suspects && state.suspects[idx]) {
                 chatManager.switchSuspect(state.suspects[idx].name);
             }
         });
 
-        bridge.on('suspectUpdate', (data) => {
+        // 批量初始化 - 合并游戏状态 + 交互控制，消除中间态
+        bridge.on('initFullState', (data) => {
+            if (!data || !data.data) return;
+            const d = data.data;
+            const state = d.state || {};
+
+            if (state.suspects) {
+                suspectManager.loadSuspects(state.suspects);
+            }
+
+            if (state.evidences) {
+                evidenceManager.loadEvidences(state.evidences);
+            }
+
+            const timeLeft = typeof state.timeLeft === 'number'
+                ? state.timeLeft
+                : (typeof state.time_left === 'number' ? state.time_left : null);
+            if (timeLeft !== null) {
+                timerManager.update(timeLeft);
+            }
+
+            const interactive = typeof d.interactive === 'boolean' ? d.interactive : true;
+            chatManager.setInputEnabled(interactive);
+
+            if (state.caseTitle) {
+                chatManager.setTitle(state.caseTitle);
+            }
+
+            if (state.caseBackground || state.suspectProfiles) {
+                window._cachedCaseBriefing = {
+                    title: state.caseBackground?.title || state.caseTitle || '案件资料',
+                    victim: state.caseBackground?.victim || '',
+                    causeOfDeath: state.caseBackground?.causeOfDeath || '',
+                    crimeScene: state.caseBackground?.crimeScene || '',
+                    suspects: (state.suspectProfiles || []).map((p) => ({
+                        name: p.name || '',
+                        role: p.role || '',
+                        personality: p.personality || '',
+                    })),
+                };
+            }
+
+            const idx = state.current_suspect_index || 0;
+            if (state.suspects && state.suspects[idx]) {
+                chatManager.switchSuspect(state.suspects[idx].name);
+            }
+
+            // 设置交互状态
+            const selector = document.getElementById('suspect-selector');
+            if (selector) selector.disabled = !interactive;
+
+            const btnPressure = document.getElementById('btn-pressure');
+            const btnEmpathy = document.getElementById('btn-empathy');
+            if (btnPressure) btnPressure.disabled = !interactive;
+            if (btnEmpathy) btnEmpathy.disabled = !interactive;
+
+            document.querySelectorAll('.evidence-card').forEach((card) => {
+                card.style.pointerEvents = interactive ? '' : 'none';
+                card.style.opacity = interactive ? '' : '0.5';
+            });
+        });
+
+        // 批量消息初始化 - DocumentFragment 一次性插入
+        bridge.on('initMessages', (data) => {
+            if (!data || !data.messages) return;
+            chatManager.loadMessages(data.messages);
+        });
+
+        bridge.on('suspectUpdate', rafThrottle((data) => {
             if (!data) return;
             suspectManager.updateSuspect(data.name, data.pressure);
-        });
+        }));
 
         bridge.on('newMessage', (data) => {
             if (!data) return;
             chatManager.addMessage(data.role, data.content, data.suspectName);
         });
 
-        bridge.on('timerUpdate', (data) => {
+        bridge.on('timerUpdate', rafThrottle((data) => {
             if (!data) return;
             timerManager.update(data.timeLeft);
-        });
+        }));
 
         bridge.on('evidenceUpdate', (data) => {
             if (!data) return;
@@ -172,7 +258,13 @@
 
         bridge.on('showSaveList', (data) => {
             if (!data) return;
-            modalManager.showSaveList(data.sessions);
+            modalManager.showSaveSlots(data.sessions, false);
+        });
+
+        bridge.on('showSaveSlots', (data) => {
+            if (!data) return;
+            const isSaveMode = data.slots && data.slots._saveMode === true;
+            modalManager.showSaveSlots(data.slots, isSaveMode);
         });
 
         bridge.on('showEndingDialog', (data) => {
@@ -192,7 +284,11 @@
         });
 
         bridge.on('settingsSaved', () => {
-            modalManager.showInfo('设置', 'LLM 设置已保存。');
+            // 在表单内显示内联成功提示，不再关闭模态框再重开
+            const resultEl = document.getElementById('settings-test-result');
+            if (resultEl) {
+                resultEl.innerHTML = '<span class="form-result-success">✓ 设置已保存</span>';
+            }
         });
 
         // Case generation modal

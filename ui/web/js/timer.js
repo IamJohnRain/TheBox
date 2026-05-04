@@ -26,6 +26,9 @@ class TimerManager {
 
         /** @type {number|null} 危险闪烁动画定时器 */
         this._dangerInterval = null;
+
+        /** @type {number|null} 上次剩余秒数，用于模态框关闭后恢复渲染 */
+        this._lastTimeLeft = null;
     }
 
     /**
@@ -40,6 +43,19 @@ class TimerManager {
      * timerManager.update(15);   // 显示 "00:15"，红色闪烁
      */
     update(timeLeft) {
+        this._lastTimeLeft = timeLeft;
+        // 模态框可见时暂停 UI 更新，减少重绘
+        if (window.modalManager && window.modalManager.isVisible()) return;
+        this._render(timeLeft);
+    }
+
+    /**
+     * 渲染倒计时显示到 DOM。
+     *
+     * @param {number} timeLeft - 剩余秒数
+     * @returns {void}
+     */
+    _render(timeLeft) {
         if (!this.display) {
             console.error('[TimerManager] Display element not found');
             return;
@@ -63,6 +79,18 @@ class TimerManager {
             this.display.classList.add('danger');
         } else if (timeLeft <= 60) {
             this.display.classList.add('warning');
+        }
+    }
+
+    /**
+     * 恢复因模态框暂停的计时器 UI 更新。
+     * 在模态框关闭后调用，将最新计时数据渲染到 DOM。
+     *
+     * @returns {void}
+     */
+    flush() {
+        if (this._lastTimeLeft !== null) {
+            this._render(this._lastTimeLeft);
         }
     }
 

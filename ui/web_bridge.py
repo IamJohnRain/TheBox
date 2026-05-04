@@ -25,6 +25,8 @@ class WebBridge(QObject):
     generate_case_requested = Signal()
     cancel_requested = Signal()
     save_selected = Signal(str)
+    save_to_slot_requested = Signal(int)
+    delete_save_requested = Signal(int)
     submit_settings_requested = Signal(str, str, str, str)
     test_connection_requested = Signal(str, str, str)
     submit_case_generation_requested = Signal(str, str)
@@ -34,6 +36,8 @@ class WebBridge(QObject):
     # === Python → JS 信号 ===
     # 游戏状态
     init_game_state = Signal(dict)
+    init_full_state = Signal(dict)
+    init_messages = Signal(list)
     update_suspect = Signal(str, int)  # name, pressure
     add_message = Signal(str, str, str)  # role, content, suspect_name
     update_timer = Signal(int)  # time_left
@@ -52,6 +56,7 @@ class WebBridge(QObject):
 
     # 存档列表
     show_save_list = Signal(list)  # sessions
+    show_save_slots = Signal(list)  # slot data for save/load UI
 
     # 游戏交互控制
     set_game_interactive = Signal(bool)  # 控制所有游戏操作
@@ -136,6 +141,16 @@ class WebBridge(QObject):
     def selectSave(self, session_id: str):
         """选择存档。"""
         self.save_selected.emit(session_id)
+
+    @Slot(int)
+    def saveToSlot(self, slot_number: int):
+        """保存到指定槽位。"""
+        self.save_to_slot_requested.emit(slot_number)
+
+    @Slot(int)
+    def deleteSave(self, slot_number: int):
+        """删除指定槽位存档。"""
+        self.delete_save_requested.emit(slot_number)
 
     @Slot()
     def requestRestart(self):

@@ -161,9 +161,94 @@ def _build_safe_system_prompt(background: str) -> str:
 7. 用推理小说、侦探故事的文风来描述，保持趣味性和逻辑性。"""
 
 
+_TRUNCATION_ERROR_PATTERNS = [
+    "Unterminated string",
+    "Expecting ',' delimiter",
+    "Expecting '}'",
+    "Expecting ']'",
+    "Expecting ':'",
+    "Unexpected end of JSON",
+]
+
+
+def _is_truncation_error(error: json.JSONDecodeError) -> bool:
+    """判断 JSON 解析错误是否由输出截断引起。"""
+    msg = str(error)
+    return any(p in msg for p in _TRUNCATION_ERROR_PATTERNS)
+
+
+def _try_repair_truncated_json(
+    client: LLMClient,
+    original_text: str,
+    temperature: float = 0.7,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> Optional[Dict]:
+    """尝试通过 LLM 续写修复被截断的 JSON。
+
+    检测到 JSON 输出被 max_tokens 截断时，将已有文本发送给 LLM 请求续写，
+    合并后重新解析。
+
+    Returns:
+        解析成功的 dict，或 None 表示修复失败。
+    """
+    def _progress(msg: str):
+        if progress_callback:
+            progress_callback(msg)
+
+    _progress("🔧 检测到输出截断，正在续写修复...")
+
+    # 取原始文本末尾部分作为上下文（避免过长）
+    context_tail = original_text[-1500:] if len(original_text) > 1500 else original_text
+
+    continuation_prompt = (
+        "你之前的 JSON 输出被截断了。以下是你输出的末尾部分：\n\n"
+        f"```\n{context_tail}\n```\n\n"
+        "请从截断处继续输出，只输出剩余的 JSON 内容，不要重复已有内容，"
+        "不要输出任何解释，确保最终合并后是一个完整的合法 JSON。"
+    )
+
+    try:
+        continuation = client.chat_completion(
+            messages=[
+                {"role": "system", "content": "你是一个 JSON 续写助手。只输出 JSON 片段，不输出任何其他内容。"},
+                {"role": "user", "content": continuation_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=2000,
+        )
+
+        if not continuation or not continuation.strip():
+            logger.warning("续写返回为空，修复失败")
+            return None
+
+        # 清理续写内容
+        cont_text = continuation.strip()
+        cont_text = re.sub(r'ahre.*?ahre', '', cont_text, flags=re.DOTALL).strip()
+        if cont_text.startswith("```"):
+            cont_text = cont_text.split("\n", 1)[-1] if "\n" in cont_text else cont_text[3:]
+        if cont_text.endswith("```"):
+            cont_text = cont_text[:-3]
+        cont_text = cont_text.strip()
+
+        # 合并原始文本和续写内容
+        merged = original_text.rstrip() + cont_text
+
+        # 尝试解析合并后的 JSON
+        case_dict = json.loads(merged)
+        logger.info("截断续写修复成功")
+        return case_dict
+
+    except json.JSONDecodeError as e:
+        logger.warning(f"续写后仍无法解析 JSON: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"续写修复异常: {e}")
+        return None
+
+
 def generate_case(
     background: str,
-    max_retries: int = 1,
+    max_retries: int = 2,
     progress_callback: Optional[Callable[[str], None]] = None,
     safe_mode: bool = False,
 ) -> Dict:
@@ -181,6 +266,7 @@ def generate_case(
 
     last_error = None
     use_safe_prompt = safe_mode
+    text = ""
 
     for attempt in range(max_retries + 1):
         try:
@@ -202,7 +288,7 @@ def generate_case(
             content = client.chat_completion(
                 messages=messages,
                 temperature=temperature,
-                max_tokens=2000,
+                max_tokens=4000,
             )
 
             _progress("🔍 正在编织线索与谜题...")
@@ -233,7 +319,34 @@ def generate_case(
             logger.warning(f"第 {attempt + 1} 次：安全提示词也触发内容过滤: {e}")
         except json.JSONDecodeError as e:
             last_error = e
-            logger.warning(f"第 {attempt + 1} 次：JSON 解析失败: {e}")
+            # 记录原始响应片段，便于排查截断位置
+            head = text[:200] if len(text) > 200 else text
+            tail = text[-200:] if len(text) > 200 else ""
+            logger.warning(
+                f"第 {attempt + 1} 次：JSON 解析失败: {e}\n"
+                f"  响应头(200): {head!r}\n"
+                f"  响应尾(200): {tail!r}"
+            )
+            # 截断型错误：尝试续写修复
+            if _is_truncation_error(e):
+                repaired = _try_repair_truncated_json(
+                    client, text, temperature=temperature,
+                    progress_callback=progress_callback,
+                )
+                if repaired is not None:
+                    try:
+                        repaired["case_id"] = repaired.get("case_id", str(uuid.uuid4()))
+                        _progress("⚖️ 正在校验逻辑自洽性...")
+                        jsonschema.validate(instance=repaired, schema=CASE_SCHEMA)
+                        _progress("✅ 案件世界构建完成！")
+                        logger.info(f"案件生成成功(续写修复): {repaired.get('case_id', 'unknown')}")
+                        return repaired
+                    except jsonschema.ValidationError as ve:
+                        logger.warning(f"续写修复后的 JSON 未通过 Schema 校验: {ve.message}")
+                        last_error = ve
+                    except Exception as ve:
+                        logger.warning(f"续写修复后校验失败: {ve}")
+                        last_error = ve
         except jsonschema.ValidationError as e:
             last_error = e
             logger.warning(f"第 {attempt + 1} 次：Schema 校验失败: {e.message}")

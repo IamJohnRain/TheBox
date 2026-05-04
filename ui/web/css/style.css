@@ -218,15 +218,20 @@ ol {
     left: 0;
     right: 0;
     height: var(--layout-nav-height);
-    background: rgba(17, 24, 39, 0.85);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: rgba(17, 24, 39, 0.95);
     border-bottom: 1px solid rgba(0, 245, 255, 0.1);
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 var(--space-6);
     z-index: var(--z-sticky);
+    transition: background var(--transition-slow);
+}
+
+.navbar.blurred {
+    background: rgba(17, 24, 39, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
 }
 
 .navbar-brand {

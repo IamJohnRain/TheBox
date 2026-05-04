@@ -58,47 +58,100 @@ class ModalManager {
     }
 
     showSaveList(sessions) {
-        const sessionsList = sessions || [];
+        this.showSaveSlots(sessions, false);
+    }
 
-        if (sessionsList.length === 0) {
-            this._show('加载存档', '<p class="text-muted">没有找到存档记录</p>', [
-                { text: '关闭', class: 'modal-btn-secondary', callback: null },
-            ]);
-            return;
-        }
+    showSaveSlots(slots, isSaveMode) {
+        const slotsList = slots || [];
 
-        let listHtml = '<div class="save-list">';
-        sessionsList.forEach((session) => {
-            listHtml += `
-                <div class="save-item" data-session-id="${this._escapeHtml(session.session_id || '')}"
-                     tabindex="0" role="button"
-                     aria-label="加载存档 ${this._escapeHtml(session.name || '未命名')}">
-                    <div class="save-item-info">
-                        <h4 class="save-item-name">${this._escapeHtml(session.name || '未命名存档')}</h4>
-                        <p class="save-item-date">${this._escapeHtml(session.date || '未知日期')}</p>
+        let listHtml = '<div class="save-slots">';
+        slotsList.forEach((slot) => {
+            if (slot.empty) {
+                listHtml += `
+                    <div class="save-slot save-slot-empty" data-slot="${slot.slot_number}" tabindex="0" role="button">
+                        <div class="save-slot-number">槽位 ${slot.slot_number}</div>
+                        <div class="save-slot-info">
+                            <div class="save-slot-name">空槽位</div>
+                            <div class="save-slot-date">点击保存</div>
+                        </div>
                     </div>
-                    <p class="save-item-summary">${this._escapeHtml(session.summary || '')}</p>
-                </div>
-            `;
+                `;
+            } else {
+                listHtml += `
+                    <div class="save-slot save-slot-occupied" data-slot="${slot.slot_number}" data-session-id="${this._escapeHtml(slot.session_id || '')}" tabindex="0" role="button">
+                        <div class="save-slot-number">槽位 ${slot.slot_number}</div>
+                        <div class="save-slot-info">
+                            <div class="save-slot-name">${this._escapeHtml(slot.name || '未知存档')}</div>
+                            <div class="save-slot-date">${this._escapeHtml(slot.date || '未知日期')}</div>
+                        </div>
+                        <button class="save-slot-delete-btn" data-delete-slot="${slot.slot_number}" title="删除此存档" aria-label="删除槽位 ${slot.slot_number}">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                `;
+            }
         });
         listHtml += '</div>';
 
-        this._show('加载存档', listHtml, [
+        const title = isSaveMode ? '选择存档槽位' : '加载存档';
+        this._show(title, listHtml, [
             { text: '取消', class: 'modal-btn-secondary', callback: null },
         ]);
 
-        const saveItems = this.bodyEl.querySelectorAll('.save-item');
-        saveItems.forEach((item) => {
+        const slotEls = this.bodyEl.querySelectorAll('.save-slot');
+        slotEls.forEach((el) => {
+            const slotNumber = parseInt(el.getAttribute('data-slot'), 10);
+            const isOccupied = el.classList.contains('save-slot-occupied');
+
+            const deleteBtn = el.querySelector('.save-slot-delete-btn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const deleteSlot = parseInt(deleteBtn.getAttribute('data-delete-slot'), 10);
+                    if (window.modalManager) {
+                        window.modalManager.showConfirm(
+                            '确认删除',
+                            `确定要删除槽位 ${deleteSlot} 的存档吗？此操作不可撤销。`,
+                            () => {
+                                if (window.bridge) window.bridge.deleteSave(deleteSlot);
+                            }
+                        );
+                    } else if (window.bridge) {
+                        window.bridge.deleteSave(deleteSlot);
+                    }
+                });
+            }
+
             const clickHandler = () => {
-                const sessionId = item.getAttribute('data-session-id');
-                if (sessionId && window.bridge) {
-                    window.bridge.selectSave(sessionId);
+                if (isSaveMode) {
+                    if (isOccupied) {
+                        if (window.modalManager) {
+                            window.modalManager.showConfirm(
+                                '覆盖存档',
+                                `槽位 ${slotNumber} 已有存档，确定要覆盖吗？`,
+                                () => {
+                                    if (window.bridge) window.bridge.saveToSlot(slotNumber);
+                                }
+                            );
+                        }
+                    } else {
+                        if (window.bridge) window.bridge.saveToSlot(slotNumber);
+                    }
+                } else {
+                    if (isOccupied) {
+                        const sessionId = el.getAttribute('data-session-id');
+                        if (sessionId && window.bridge) {
+                            window.bridge.selectSave(sessionId);
+                        }
+                    }
                 }
-                this.hide();
             };
 
-            item.addEventListener('click', clickHandler);
-            item.addEventListener('keypress', (e) => {
+            el.addEventListener('click', clickHandler);
+            el.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') clickHandler();
             });
         });
@@ -316,6 +369,7 @@ class ModalManager {
             }},
             { text: '保存', class: 'modal-btn-primary', callback: () => {
                 this._onSaveSettings();
+                return false;  // 不关闭模态框，让用户看到保存结果
             }},
             { text: '取消', class: 'modal-btn-secondary', callback: null },
         ]);
@@ -723,6 +777,8 @@ class ModalManager {
         if (this.backdrop) this.backdrop.classList.remove('active');
         if (this.modal) this.modal.classList.remove('active');
         this._confirmCallback = null;
+        // 恢复因模态框暂停的计时器 UI 更新
+        if (window.timerManager) window.timerManager.flush();
     }
 
     _show(title, bodyHtml, buttons) {

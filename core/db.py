@@ -10,6 +10,8 @@ logger = logging.getLogger("thebox")
 
 DEFAULT_DB_PATH = "thebox.db"
 
+MAX_SLOTS = 5
+
 
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
     try:
@@ -31,10 +33,15 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
                 session_id TEXT PRIMARY KEY,
                 case_id TEXT,
                 current_state_json TEXT,
-                saved_at TIMESTAMP
+                saved_at TIMESTAMP,
+                slot_number INTEGER
             )
         """
         )
+        try:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN slot_number INTEGER")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         conn.close()
         logger.info(f"数据库初始化完成: {db_path}")
@@ -165,6 +172,136 @@ def load_full_session(
     except (sqlite3.Error, json.JSONDecodeError) as e:
         logger.error(f"加载完整存档失败: {e}")
         raise DatabaseError(f"加载完整存档失败: {e}") from e
+
+
+def save_session_to_slot(
+    slot_number: int, case_id: str, engine_state_dict: dict, db_path: str = DEFAULT_DB_PATH
+) -> None:
+    """Save session to a specific slot (1-MAX_SLOTS). Uses INSERT OR REPLACE on slot_number."""
+    if not (1 <= slot_number <= MAX_SLOTS):
+        raise DatabaseError(f"无效槽位: {slot_number}，有效范围 1-{MAX_SLOTS}")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        now = datetime.now().isoformat()
+        cursor.execute(
+            "SELECT session_id FROM sessions WHERE slot_number = ?",
+            (slot_number,),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            session_id = existing[0]
+            cursor.execute(
+                "UPDATE sessions SET case_id = ?, current_state_json = ?, saved_at = ? WHERE session_id = ?",
+                (
+                    case_id,
+                    json.dumps(engine_state_dict, ensure_ascii=False),
+                    now,
+                    session_id,
+                ),
+            )
+        else:
+            import uuid
+            session_id = str(uuid.uuid4())
+            cursor.execute(
+                "INSERT INTO sessions (session_id, case_id, current_state_json, saved_at, slot_number) VALUES (?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    case_id,
+                    json.dumps(engine_state_dict, ensure_ascii=False),
+                    now,
+                    slot_number,
+                ),
+            )
+        conn.commit()
+        conn.close()
+        logger.info(f"存档已保存到槽位 {slot_number}: session_id={session_id}")
+    except (sqlite3.Error, json.JSONDecodeError) as e:
+        logger.error(f"保存存档到槽位失败: {e}")
+        raise DatabaseError(f"保存存档到槽位失败: {e}") from e
+
+
+def delete_session_by_slot(
+    slot_number: int, db_path: str = DEFAULT_DB_PATH
+) -> None:
+    """Delete a session by slot number."""
+    if not (1 <= slot_number <= MAX_SLOTS):
+        raise DatabaseError(f"无效槽位: {slot_number}，有效范围 1-{MAX_SLOTS}")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM sessions WHERE slot_number = ?",
+            (slot_number,),
+        )
+        conn.commit()
+        deleted = cursor.rowcount > 0
+        conn.close()
+        if deleted:
+            logger.info(f"槽位 {slot_number} 存档已删除")
+        else:
+            logger.info(f"槽位 {slot_number} 无存档，跳过删除")
+    except sqlite3.Error as e:
+        logger.error(f"删除存档失败: {e}")
+        raise DatabaseError(f"删除存档失败: {e}") from e
+
+
+def list_all_slots(db_path: str = DEFAULT_DB_PATH) -> list:
+    """Return a list of MAX_SLOTS slot dicts, each with slot_number, session_id, case_id, saved_at, and empty flag."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT session_id, case_id, saved_at, slot_number FROM sessions WHERE slot_number IS NOT NULL ORDER BY slot_number"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        occupied = {}
+        for row in rows:
+            sn = row[3]
+            if 1 <= sn <= MAX_SLOTS:
+                occupied[sn] = {
+                    "slot_number": sn,
+                    "session_id": row[0],
+                    "case_id": row[1],
+                    "saved_at": row[2],
+                    "empty": False,
+                }
+        result = []
+        for i in range(1, MAX_SLOTS + 1):
+            if i in occupied:
+                result.append(occupied[i])
+            else:
+                result.append({
+                    "slot_number": i,
+                    "session_id": None,
+                    "case_id": None,
+                    "saved_at": None,
+                    "empty": True,
+                })
+        return result
+    except sqlite3.Error as e:
+        logger.error(f"获取存档槽位列表失败: {e}")
+        raise DatabaseError(f"获取存档槽位列表失败: {e}") from e
+
+
+def find_first_empty_slot(db_path: str = DEFAULT_DB_PATH) -> Optional[int]:
+    """Return the first empty slot number (1-based), or None if all occupied."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT slot_number FROM sessions WHERE slot_number IS NOT NULL"
+        )
+        occupied = {row[0] for row in cursor.fetchall()}
+        conn.close()
+        for i in range(1, MAX_SLOTS + 1):
+            if i not in occupied:
+                return i
+        return None
+    except sqlite3.Error as e:
+        logger.error(f"查找空槽位失败: {e}")
+        raise DatabaseError(f"查找空槽位失败: {e}") from e
 
 
 def list_sessions(db_path: str = DEFAULT_DB_PATH) -> list:

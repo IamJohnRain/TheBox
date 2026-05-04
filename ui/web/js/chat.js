@@ -150,7 +150,7 @@ class ChatManager {
 
     clear() {
         if (!this.container) return;
-        this.container.innerHTML = '';  // clear 时可以安全清空，因为是从零开始
+        this.container.innerHTML = '';
         this._typingEl = null;
         this._messagesBySuspect = {};
         this._currentSuspect = null;
@@ -160,6 +160,60 @@ class ChatManager {
         placeholder.setAttribute('data-suspect', '_placeholder');
         placeholder.innerHTML = '<div class="message-content">选择嫌疑人开始审讯...</div>';
         this.container.appendChild(placeholder);
+    }
+
+    loadMessages(messages) {
+        if (!this.container || !messages || messages.length === 0) return;
+
+        if (this._typingEl && this._typingEl.parentNode) {
+            this._typingEl.parentNode.removeChild(this._typingEl);
+        }
+        this._typingEl = null;
+        this._hidePlaceholder();
+
+        const fragment = document.createDocumentFragment();
+
+        messages.forEach((msg) => {
+            const role = msg.role || '';
+            const content = msg.content || '';
+            if (!content.trim()) return;
+
+            const time = msg.time || new Date().toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+            });
+
+            const owner = role === 'player'
+                ? (this._currentSuspect || '_default')
+                : (msg.suspectName || '_default');
+
+            if (!this._messagesBySuspect[owner]) {
+                this._messagesBySuspect[owner] = [];
+            }
+            this._messagesBySuspect[owner].push({ role, content, suspectName: msg.suspectName, time });
+
+            const messageEl = document.createElement('div');
+            messageEl.className = `message message-${role} no-animation`;
+            messageEl.setAttribute('data-suspect', owner);
+
+            if (role === 'system') {
+                messageEl.innerHTML = `
+                    <div class="message-content">${this._escapeHtml(content)}</div>
+                `;
+            } else {
+                const displayName = msg.suspectName || (role === 'player' ? '审讯员' : '嫌疑人');
+                messageEl.innerHTML = `
+                    <span class="message-sender">${this._escapeHtml(displayName)}</span>
+                    <div class="message-content">${this._escapeHtml(content)}</div>
+                    <span class="message-time">${time}</span>
+                `;
+            }
+
+            fragment.appendChild(messageEl);
+        });
+
+        this.container.appendChild(fragment);
+        this._scrollToBottom();
     }
 
     setInputEnabled(enabled) {

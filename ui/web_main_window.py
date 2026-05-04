@@ -207,6 +207,8 @@ class WebMainWindow(QMainWindow):
         self.bridge.generate_case_requested.connect(self._on_generate_case)
         self.bridge.cancel_requested.connect(self._on_cancel_operation)
         self.bridge.save_selected.connect(self._on_save_selected)
+        self.bridge.save_to_slot_requested.connect(self._on_save_to_slot)
+        self.bridge.delete_save_requested.connect(self._on_delete_save)
         self.bridge.restart_requested.connect(self._restart)
         self.bridge.return_to_menu_requested.connect(self._return_to_menu)
         self.bridge.submit_settings_requested.connect(self._on_submit_settings)
@@ -249,13 +251,11 @@ class WebMainWindow(QMainWindow):
 
     def load_case(self, case_data):
         """加载案件到引擎并更新 UI。"""
-        # 确保 case_data 有 case_id
         if "case_id" not in case_data or not case_data["case_id"]:
             case_data["case_id"] = str(uuid.uuid4())
 
         self.engine = InterrogationEngine(case_data)
 
-        # 确保案件数据入库
         try:
             db.save_case(case_data)
         except Exception as exc:
@@ -288,11 +288,8 @@ class WebMainWindow(QMainWindow):
             ],
         }
 
-        self.bridge.init_game_state.emit(state)
-        self.bridge.set_input_enabled.emit(True)
-        self.bridge.set_game_interactive.emit(True)
+        self.bridge.init_full_state.emit({"state": state, "interactive": True})
 
-        # 自动弹出案件资料
         self._emit_case_briefing(case_data)
 
         if self.engine.suspects:
@@ -479,12 +476,10 @@ class WebMainWindow(QMainWindow):
         """返回主菜单。"""
         self.engine = None
         self.bridge.clear_chat.emit()
-        self.bridge.set_game_interactive.emit(False)  # 禁用所有操作
         self._countdown_timer.stop()
 
-        # 重置嫌疑人面板
-        self.bridge.init_game_state.emit(
-            {
+        self.bridge.init_full_state.emit({
+            "state": {
                 "suspects": [],
                 "evidences": [],
                 "timeLeft": 0,
@@ -492,8 +487,9 @@ class WebMainWindow(QMainWindow):
                 "state": "selecting",
                 "case_id": "",
                 "caseTitle": "",
-            }
-        )
+            },
+            "interactive": False,
+        })
 
     # ================================================================
     # Review
@@ -653,8 +649,10 @@ class WebMainWindow(QMainWindow):
         logger.info(f"案件生成成功: {case_dict.get('title', '未知')}")
         self.bridge.case_generation_complete.emit(case_dict)
         self._case_gen_worker = None
-        # 延迟加载案件，等 modal 关闭动画完成
-        QTimer.singleShot(350, lambda: self.load_case(case_dict))
+        # 直接加载案件，不再使用延迟定时器
+        # JS 端的 updateGenerationComplete 会关闭模态框
+        # load_case 会通过 init_full_state + show_case_briefing 更新 UI
+        self.load_case(case_dict)
 
     def _on_case_generation_error(self, error_msg):
         """案件生成失败。"""
@@ -688,50 +686,86 @@ class WebMainWindow(QMainWindow):
     # ================================================================
 
     def _on_save_game(self):
-        """存档。"""
+        """存档 - 查找空槽位或弹出槽位选择。"""
         if self.engine is None:
             return
         try:
-            session_id = str(uuid.uuid4())
-            case_id = self.engine.case.get("case_id", "unknown")
-            case_title = self.engine.case.get("title", "未知案件")
-
-            # 确保案件数据在数据库中是最新的
-            db.save_case(self.engine.case)
-
-            engine_state_dict = self.engine.to_dict()
-            db.save_full_session(session_id, case_id, engine_state_dict)
-            logger.info(f"存档成功: session_id={session_id}, case={case_title}")
-
-            from datetime import datetime as dt
-            now_str = dt.now().strftime("%Y-%m-%d %H:%M")
-            self.bridge.show_dialog.emit(
-                "存档成功", f"「{case_title}」已保存\n{now_str}"
-            )
+            empty_slot = db.find_first_empty_slot()
+            if empty_slot is not None:
+                self._do_save_to_slot(empty_slot)
+            else:
+                slots = db.list_all_slots()
+                formatted = self._format_slots(slots)
+                self.bridge.show_save_slots.emit({"slots": formatted, "_saveMode": True})
         except Exception as exc:
             logger.error(f"存档失败: {exc}")
             self.bridge.show_dialog.emit("存档失败", f"保存失败: {exc}")
 
+    def _on_save_to_slot(self, slot_number: int):
+        """保存到指定槽位。"""
+        if self.engine is None:
+            return
+        try:
+            self._do_save_to_slot(slot_number)
+        except Exception as exc:
+            logger.error(f"存档失败: {exc}")
+            self.bridge.show_dialog.emit("存档失败", f"保存失败: {exc}")
+
+    def _do_save_to_slot(self, slot_number: int):
+        """执行保存到指定槽位。"""
+        case_id = self.engine.case.get("case_id", "unknown")
+        case_title = self.engine.case.get("title", "未知案件")
+        db.save_case(self.engine.case)
+        engine_state_dict = self.engine.to_dict()
+        db.save_session_to_slot(slot_number, case_id, engine_state_dict)
+        logger.info(f"存档成功: slot={slot_number}, case={case_title}")
+        from datetime import datetime as dt
+        now_str = dt.now().strftime("%Y-%m-%d %H:%M")
+        self.bridge.show_dialog.emit(
+            "存档成功", f"「{case_title}」已保存到槽位 {slot_number}\n{now_str}"
+        )
+
+    def _on_delete_save(self, slot_number: int):
+        """删除指定槽位存档。"""
+        try:
+            db.delete_session_by_slot(slot_number)
+            logger.info(f"槽位 {slot_number} 存档已删除")
+            self.bridge.show_dialog.emit("删除成功", f"槽位 {slot_number} 的存档已清除")
+        except Exception as exc:
+            logger.error(f"删除存档失败: {exc}")
+            self.bridge.show_dialog.emit("删除失败", f"删除失败: {exc}")
+
     def _on_load_game(self):
-        """读档 - 显示存档列表。"""
+        """读档 - 显示存档槽位列表。"""
         logger.info("请求读档列表")
         try:
-            sessions = db.list_sessions()
-            formatted_sessions = []
-            for s in sessions:
+            slots = db.list_all_slots()
+            formatted = self._format_slots(slots)
+            self.bridge.show_save_slots.emit({"slots": formatted, "_saveMode": False})
+        except Exception as exc:
+            logger.error(f"获取存档列表失败: {exc}")
+            self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
+
+    def _format_slots(self, slots):
+        """Format slot data for the frontend."""
+        formatted = []
+        for s in slots:
+            slot = {
+                "slot_number": s["slot_number"],
+                "empty": s["empty"],
+            }
+            if not s["empty"]:
                 case_id = s.get("case_id", "")
                 case_data = db.load_case(case_id)
                 if case_data:
                     case_title = case_data.get("title", "未知案件")
                 else:
-                    # 降级：尝试从 session 的 engine_state 中提取 case_title
                     result = db.load_full_session(s["session_id"])
                     if result:
                         _, engine_state = result
                         case_title = engine_state.get("case_title", "未知案件")
                     else:
                         case_title = "未知案件"
-
                 saved_at = s.get("saved_at", "")
                 try:
                     from datetime import datetime as dt
@@ -739,17 +773,11 @@ class WebMainWindow(QMainWindow):
                     date_str = parsed.strftime("%Y-%m-%d %H:%M")
                 except (ValueError, TypeError):
                     date_str = saved_at
-
-                formatted_sessions.append({
-                    "session_id": s["session_id"],
-                    "name": f"{case_title} - {date_str}",
-                    "date": date_str,
-                    "summary": "",
-                })
-            self.bridge.show_save_list.emit(formatted_sessions)
-        except Exception as exc:
-            logger.error(f"获取存档列表失败: {exc}")
-            self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
+                slot["session_id"] = s["session_id"]
+                slot["name"] = case_title
+                slot["date"] = date_str
+            formatted.append(slot)
+        return formatted
 
     def _on_save_selected(self, session_id):
         """选择存档后加载。"""
@@ -764,7 +792,6 @@ class WebMainWindow(QMainWindow):
             case_data = db.load_case(case_id)
 
             if case_data is None:
-                # 降级：尝试从 engine_state_dict 中恢复案件信息
                 case_title = engine_state_dict.get("case_title", "未知案件")
                 self.bridge.show_dialog.emit(
                     "读档警告",
@@ -802,23 +829,21 @@ class WebMainWindow(QMainWindow):
                 ],
             }
 
-            self.bridge.init_game_state.emit(state)
-            self.bridge.set_input_enabled.emit(True)
+            interactive = self.engine.state not in ("breakdown", "verdict")
+            self.bridge.init_full_state.emit({"state": state, "interactive": interactive})
 
-            # 根据游戏状态决定是否启用交互
-            if self.engine.state in ("breakdown", "verdict"):
-                self.bridge.set_game_interactive.emit(False)
-            else:
-                self.bridge.set_game_interactive.emit(True)
-
+            messages = []
             for suspect in self.engine.suspects:
                 for msg in suspect.memory:
                     role = msg.get("role", "")
                     content = msg.get("content", "")
                     if role == "user":
-                        self.bridge.add_message.emit("player", content, "审讯员")
+                        messages.append({"role": "player", "content": content, "suspectName": suspect.name})
                     elif role == "assistant":
-                        self.bridge.add_message.emit("suspect", content, suspect.name)
+                        messages.append({"role": "suspect", "content": content, "suspectName": suspect.name})
+
+            if messages:
+                self.bridge.init_messages.emit(messages)
 
             if self.engine.state == "interrogating":
                 self._countdown_timer.start()

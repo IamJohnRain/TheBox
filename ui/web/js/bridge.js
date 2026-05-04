@@ -70,6 +70,14 @@ class WebBridge {
             this._trigger('initGameState', { state });
         });
 
+        this.pythonBridge.init_full_state.connect((data) => {
+            this._trigger('initFullState', { data });
+        });
+
+        this.pythonBridge.init_messages.connect((messages) => {
+            this._trigger('initMessages', { messages });
+        });
+
         this.pythonBridge.update_suspect.connect((name, pressure) => {
             this._trigger('suspectUpdate', { name, pressure });
         });
@@ -116,6 +124,10 @@ class WebBridge {
 
         this.pythonBridge.show_save_list.connect((sessions) => {
             this._trigger('showSaveList', { sessions });
+        });
+
+        this.pythonBridge.show_save_slots.connect((slots) => {
+            this._trigger('showSaveSlots', { slots });
         });
 
         this.pythonBridge.show_ending_dialog.connect((title, message) => {
@@ -264,6 +276,18 @@ class WebBridge {
     selectSave(sessionId) {
         if (this.pythonBridge && sessionId) {
             this.pythonBridge.selectSave(sessionId);
+        }
+    }
+
+    saveToSlot(slotNumber) {
+        if (this.pythonBridge && typeof slotNumber === 'number') {
+            this.pythonBridge.saveToSlot(slotNumber);
+        }
+    }
+
+    deleteSave(slotNumber) {
+        if (this.pythonBridge && typeof slotNumber === 'number') {
+            this.pythonBridge.deleteSave(slotNumber);
         }
     }
 

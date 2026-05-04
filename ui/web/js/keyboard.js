@@ -48,8 +48,15 @@ class KeyboardManager {
         document.addEventListener('keydown', (e) => {
             if (!this._enabled) return;
 
+            // 检查焦点是否在输入元素内
+            const tag = e.target.tagName.toLowerCase();
+            const isInputFocused = (tag === 'input' || tag === 'textarea' || tag === 'select');
+
             // 构建快捷键标识
             const key = this._buildKeyIdentifier(e);
+
+            // 在输入框内时，只允许 Escape 快捷键（关闭模态框）
+            if (isInputFocused && key !== 'escape') return;
 
             // 检查是否有匹配的绑定
             if (this._bindings.has(key)) {
