@@ -189,6 +189,9 @@ class WebMainWindow(QMainWindow):
 
         self._connect_bridge_signals()
 
+        from core.llm_client import llm_client
+        llm_client.initialize()
+
         if case_data:
             self.web_view.loadFinished.connect(
                 lambda ok: self.load_case(case_data) if ok else None
