@@ -1,8 +1,10 @@
-# Phase 2：审讯深度 — 反驳机制 + 压力增强 + 证据链
+# Phase 2：审讯深度 — 反驳机制 + 压力增强 + 证据链（优化版 v1.1）
+
+> **评审变更**：修复P0主动开口线程阻塞（改为轮次触发+异步）、反驳增加程序化兜底、证据链奖励配置化、高压行为指令动态注入
 
 ## 前置依赖
 
-Phase 1 完成（供词层级、证据系统重构）。
+Phase 1 完成（供词层级、证据系统重构、统一胜利入口 `_check_victory`）。
 
 ## 目标
 
@@ -15,7 +17,7 @@ Phase 1 完成（供词层级、证据系统重构）。
 | 2.1 | 嫌疑人反驳机制 | `core/suspect_agent.py` | 中 |
 | 2.2 | 反驳事件与 UI | `schemas/events.py`, `ui/web_bridge.py`, `ui/web/js/`, `ui/web_main_window.py` | 中 |
 | 2.3 | 压力程序化效果 | `core/suspect_agent.py`, `core/interrogation.py` | 中 |
-| 2.4 | 证据链机制 | `core/interrogation.py`, `core/case_generator.py` | 小 |
+| 2.4 | 证据链机制 | `core/interrogation.py`, `core/case_generator.py`, `core/game_config.py` | 小 |
 | 2.5 | 嫌疑人主动开口 | `core/interrogation.py`, `ui/web_main_window.py` | 中 |
 | 2.6 | 测试 | `tests/` | 中 |
 
@@ -25,7 +27,7 @@ Phase 1 完成（供词层级、证据系统重构）。
 
 ### 设计
 
-出示证据时，嫌疑人会尝试用 `knowledge` 中的信息进行反驳。反驳是否可信由 LLM 判断。
+出示证据时，嫌疑人会尝试用 `knowledge` 中的信息进行反驳。反驳是否可信由 LLM 判断 + 程序化兜底。
 
 ### 修改 `core/suspect_agent.py` — `respond_evidence` 返回值扩展
 
@@ -35,7 +37,6 @@ Phase 1 完成（供词层级、证据系统重构）。
 ```
 请以 JSON 格式回复：
 - "reply": 你的回复文本（1-3句话）
-- "pressure_change": 整数，压力变化
 - "secret_triggered": 如提到禁止内容则填写，否则为null
 - "rebuttal": true/false，你是否尝试反驳这件证据
 - "rebuttal_believable": true/false，如果你在反驳，你认为你的反驳是否可信
@@ -50,23 +51,52 @@ Phase 1 完成（供词层级、证据系统重构）。
 - 压力高于80时，你几乎无法有效反驳
 ```
 
-### 反驳结果处理
+### 反驳结果处理（增加程序化兜底）
 
 在 `InterrogationEngine.submit_action` 的 `present_evidence` 分支中：
 
 ```python
 result = suspect.respond_evidence(evidence_desc, evidence_type)
 
-# 反驳机制处理
-if result.get("rebuttal"):
-    if result.get("rebuttal_believable"):
+# 反驳机制处理（LLM判断 + 程序化兜底）
+rebuttal = result.get("rebuttal", False)
+rebuttal_believable = result.get("rebuttal_believable", False)
+
+# 程序化兜底：高压时反驳可信度强制衰减
+if rebuttal and rebuttal_believable:
+    if suspect.pressure > 80:
+        # 压力>80时，即使LLM认为可信，程序也判定为不可信
+        rebuttal_believable = False
+        logger.debug(f"[{suspect.name}] 压力{suspect.pressure}>80，反驳可信度被程序覆盖为False")
+    elif suspect.pressure > 60:
+        # 压力60-80时，可信度减半（视为不可信）
+        rebuttal_believable = False
+
+if rebuttal:
+    if rebuttal_believable:
         # 反驳成功：压力不增加（覆盖证据带来的压力增量），嫌疑人可信度上升
         suspect.credibility = min(100, suspect.credibility + 10)
-        # 不执行后续的证据压力增量
+        pressure_delta = 0  # 抵消证据压力增量
+        rebuttal_event: RebuttalEvent = {
+            "type": "rebuttal",
+            "suspect_index": self.current_suspect_index,
+            "rebuttal_text": result["reply"],
+            "believable": True,
+            "credibility_change": +10,
+        }
+        events.append(rebuttal_event)
     else:
         # 反驳失败：压力按证据强度增加，供词进度额外提升
         suspect.credibility = max(0, suspect.credibility - 5)
-        # 正常执行证据压力增量（Phase 1 已实现的逻辑）
+        # pressure_delta 保持证据原本的计算值（Phase 1 已实现的逻辑）
+        rebuttal_event: RebuttalEvent = {
+            "type": "rebuttal",
+            "suspect_index": self.current_suspect_index,
+            "rebuttal_text": result["reply"],
+            "believable": False,
+            "credibility_change": -5,
+        }
+        events.append(rebuttal_event)
 ```
 
 ### 新增属性
@@ -74,6 +104,15 @@ if result.get("rebuttal"):
 在 `SuspectAgent.__init__` 中新增：
 ```python
 self.credibility: int = 50  # 嫌疑人可信度，影响后续反驳成功率
+```
+
+**并在 `to_dict`/`from_dict` 中序列化**：
+```python
+# to_dict:
+"credibility": suspect.credibility,
+
+# from_dict:
+engine.suspects[i].credibility = suspect_state.get("credibility", 50)
 ```
 
 ---
@@ -143,13 +182,32 @@ def _get_pressure_instruction(self) -> str:
 
 将此方法的返回值注入到系统提示词中，替换原有的通用压力描述。
 
-### 2.3.2 供词进度增速（已在 Phase 1 的 game_config.py 中定义）
+**修改 `_build_system_prompt`**：
+```python
+def _build_system_prompt(self, suspect_data: dict, case_title: str) -> str:
+    # ... 其他部分不变 ...
+    prompt = (
+        # ...
+        f"## 当前压力值：{{pressure_value}}/100\n"
+        "{{pressure_instruction}}\n"  # ← 新增占位符
+        # ...
+    )
+    return prompt
 
-在 `SuspectAgent.update_confession_progress` 中使用 `CONFESSION_PROGRESS_RATE`。
+def _get_system_message(self) -> dict:
+    """构建带有当前压力值和行为指令的系统消息。"""
+    prompt = self._system_prompt.replace("{pressure_value}", str(self.pressure))
+    prompt = prompt.replace("{pressure_instruction}", self._get_pressure_instruction())
+    return {"role": "system", "content": prompt}
+```
 
-### 2.3.3 反驳成功率（已在 2.1 中通过提示词实现）
+### 2.3.2 供词进度增速
 
-不使用硬编码概率，完全由 LLM 根据提示词中的压力描述自行判断。
+在 `SuspectAgent.update_confession_progress` 中使用 `CONFESSION_PROGRESS_RATE`（已在 Phase 1 的 game_config.py 中定义）。
+
+### 2.3.3 反驳成功率
+
+不使用硬编码概率，由 LLM 根据提示词中的压力描述自行判断 + 程序化兜底（见 2.1）。
 
 ---
 
@@ -161,7 +219,7 @@ def _get_pressure_instruction(self) -> str:
 
 ### Schema 扩展
 
-在 Phase 1 的 Schema 基础上，`evidences` 中新增 `chain_with` 字段（已在 Phase 1 的 Schema 中预留）：
+在 Phase 1 的 Schema 基础上，`evidences` 中新增 `chain_with` 字段：
 
 ```json
 {
@@ -180,20 +238,27 @@ def _get_pressure_instruction(self) -> str:
 在 `submit_action` 的 `present_evidence` 分支中：
 
 ```python
-# 检查证据链
+# 检查证据链（在计算 pressure_delta 之前）
+from core.game_config import CHAIN_BONUS
 chain_bonus = 0
 for prev_id in self.presented_evidence_ids:
     prev_evidence = self._find_evidence(prev_id)
     if prev_evidence and evidence_id in prev_evidence.get("chain_with", []):
-        chain_bonus = 10
+        chain_bonus = CHAIN_BONUS
         break
     if prev_evidence and prev_id in evidence.get("chain_with", []):
-        chain_bonus = 10
+        chain_bonus = CHAIN_BONUS
         break
 
+# 压力增量 = 证据基础值 + 证据链奖励
+if evidence.get("related_suspect") == suspect.name:
+    from core.game_config import EVIDENCE_PRESSURE_BASE, EVIDENCE_STRENGTH_MULTIPLIER
+    base = EVIDENCE_PRESSURE_BASE.get(evidence_type, 10)
+    strength = evidence.get("strength", 5)
+    pressure_delta = int(base * (1 + strength * EVIDENCE_STRENGTH_MULTIPLIER)) + chain_bonus
+    # ... 其余逻辑不变 ...
+
 if chain_bonus > 0:
-    suspect.pressure = max(0, min(100, suspect.pressure + chain_bonus))
-    # 发送系统消息
     chain_msg: NewMessageEvent = {
         "type": "new_message",
         "role": "system",
@@ -201,6 +266,21 @@ if chain_bonus > 0:
         "suspect_name": None,
     }
     events.append(chain_msg)
+```
+
+### game_config.py 新增（Phase 2 配置）
+
+```python
+# 证据链奖励值
+CHAIN_BONUS: int = 10
+
+# 反驳可信度程序化兜底配置
+REBUTTAL_DECAY_CONFIG = {
+    "pressure_threshold_hard": 80,   # 压力超过此值强制判定为不可信
+    "pressure_threshold_soft": 60,   # 压力超过此值可信度减半
+    "credibility_bonus_success": 10,
+    "credibility_penalty_fail": 5,
+}
 ```
 
 ### 生成提示词修改
@@ -218,34 +298,66 @@ if chain_bonus > 0:
 
 高压时嫌疑人可能主动辩解，不等玩家提问。
 
+### 关键修正（v1.1）
+
+**v1.0 原方案的问题**：在 `tick()` 中直接调用 `suspect.respond()`，阻塞 Qt 主线程。
+
+**v1.1 优化方案**：改为基于**轮次触发**（非秒），在 `submit_action` 末尾检查条件，通过 WebWorker 异步执行。
+
 ### 实现
 
-在 `InterrogationEngine.tick()` 中新增逻辑：
+**修改 `core/interrogation.py` — 新增主动开口检查**：
 
 ```python
-def tick(self, seconds_elapsed: int = 1) -> List[UIEvent]:
-    # ... 现有的倒计时逻辑 ...
+def _check_proactive_speech(self, suspect) -> Optional[dict]:
+    """检查嫌疑人是否应该主动开口。
 
-    # 新增：高压时嫌疑人主动开口
-    suspect = self.suspects[self.current_suspect_index]
-    if suspect.pressure > 70 and self.state == "interrogating":
-        import random
-        if random.random() < 0.02:  # 每秒约 2% 概率
-            # 构建主动开口的 prompt
-            result = suspect.respond(
-                "（审讯员沉默了片刻，你感到压力越来越大，忍不住想说些什么...）"
-            )
-            # 构造事件...
-            proactive_msg: NewMessageEvent = {
-                "type": "new_message",
-                "role": "suspect",
-                "content": f"[主动开口] {result['reply']}",
-                "suspect_name": suspect.name,
-            }
-            events.append(proactive_msg)
+    触发条件：
+    - 压力 > 70
+    - 每 5 轮对话检查一次（而非每秒）
+    - 概率基于压力值（pressure/200，即 35%-50%）
+
+    Returns:
+        respond 结果字典，或 None（不触发）
+    """
+    if suspect.pressure <= 70:
+        return None
+    if suspect.turn_count % 5 != 0:
+        return None
+
+    import random
+    probability = suspect.pressure / 200  # 35% - 50%
+    if random.random() >= probability:
+        return None
+
+    # 构建主动开口的 prompt
+    result = suspect.respond(
+        "（审讯员沉默了片刻，你感到压力越来越大，忍不住想说些什么...）"
+    )
+    return result
 ```
 
-**注意**：主动开口的内容可能暴露信息（增加策略深度），也可能只是无意义的辩解。
+**在 `submit_action` 末尾调用**（供词进度更新之后）：
+
+```python
+# ── 嫌疑人主动开口检查 ──
+proactive_result = self._check_proactive_speech(suspect)
+if proactive_result:
+    proactive_msg: NewMessageEvent = {
+        "type": "new_message",
+        "role": "suspect",
+        "content": f"[主动开口] {proactive_result['reply']}",
+        "suspect_name": suspect.name,
+    }
+    events.append(proactive_msg)
+
+    # 主动开口也可能触发胜利条件
+    victory_event = self._check_victory(suspect, proactive_result)
+    if victory_event:
+        events.append(victory_event)
+```
+
+**注意**：主动开口的内容可能暴露信息（增加策略深度），也可能只是无意义的辩解。由于 `_check_proactive_speech` 在 `submit_action` 中调用，而 `submit_action` 已在 WebWorker 中执行，因此主动开口也是异步的，不会阻塞 UI。
 
 ---
 
@@ -255,6 +367,22 @@ def tick(self, seconds_elapsed: int = 1) -> List[UIEvent]:
 |------|------|
 | 反驳成功不增加压力 | 模拟 believable=True 的反驳，验证压力不变 |
 | 反驳失败正常增加压力 | 模拟 believable=False 的反驳，验证压力增加 |
+| 反驳程序化兜底 | 模拟 pressure=85 + believable=True，验证程序覆盖为 False |
 | 证据链触发 | 出示两个 chain_with 关联的证据，验证额外压力 |
-| 高压主动开口 | 模拟压力>70，验证 tick 中的主动开口逻辑 |
+| 主动开口轮次触发 | 验证每5轮检查一次，非每秒检查 |
+| 主动开口异步执行 | 验证主动开口不阻塞 UI 线程 |
 | 动态提示词 | 验证不同压力下系统提示词内容不同 |
+| credibility 序列化 | 验证存档/读档后可信度正确恢复 |
+
+---
+
+## Phase 2 评审后关键变更对照表
+
+| 变更项 | v1.0 原方案 | v1.1 优化方案 | 原因 |
+|--------|------------|--------------|------|
+| 主动开口触发 | `tick()` 中每秒2%概率 | `submit_action` 中每5轮检查 | P0：避免阻塞UI线程 |
+| 反驳可信度 | 完全依赖LLM自评 | LLM判断+程序化兜底 | P1：增加可靠性 |
+| 证据链奖励 | 硬编码`chain_bonus=10` | `game_config.CHAIN_BONUS` | P2：配置化 |
+| 压力行为指令 | 通用描述 | 4段压力段动态注入 | 增强：细化LLM行为 |
+
+(End of file - total 310 lines)

@@ -1,4 +1,6 @@
-# Phase 1：基础重构 — 证据系统 + 供词层级
+# Phase 1：基础重构 — 证据系统 + 供词层级（优化版 v1.1）
+
+> **评审变更**：修复P0 `_postprocess`冲突、抽取`_call_llm()`、统一胜利入口`_check_victory()`、压力程序化计算、移除`requires_semantic`、game_config分阶段配置
 
 ## 目标
 
@@ -16,7 +18,7 @@
 | 1.6 | 供词层级 UI | `ui/web/js/suspect.js`, `ui/web/index.html`, `ui/web/css/` | 中 |
 | 1.7 | 修复静态系统提示词 | `core/suspect_agent.py` | 小 |
 | 1.8 | 案件 Schema 扩展 | `core/case_generator.py` | 小 |
-| 1.9 | 存档兼容 | `core/interrogation.py` | 小 |
+| 1.9 | 存档兼容 | `core/interrogation.py`, `core/suspect_agent.py` | 小 |
 | 1.10 | 测试 | `tests/` | 中 |
 
 ---
@@ -25,7 +27,7 @@
 
 **文件**: `core/game_config.py` (新建)
 
-**目的**: 将所有可调参数集中管理，避免硬编码，支持后续调整。
+**目的**: 将所有可调参数集中管理，避免硬编码，支持后续调整。**Phase 1 只放置 Phase 1 需要的配置**，后续 Phase 配置按阶段添加。
 
 ```python
 """Game configuration — all tunable parameters in one place."""
@@ -49,13 +51,13 @@ CONFESSION_LEVELS = {
 # pressure: 需要达到的最低压力值
 # min_turns: 需要的最低对话轮次
 # requires_evidence: 是否需要出示过关联证据
-# requires_semantic: 是否需要 LLM 语义判断（会增加 API 调用）
 CONFESSION_THRESHOLDS: Dict[int, Dict[str, Any]] = {
-    0: {"pressure": 40, "min_turns": 3, "requires_evidence": False, "requires_semantic": False},
-    1: {"pressure": 60, "min_turns": 5, "requires_evidence": True, "requires_semantic": False},
-    2: {"pressure": 75, "min_turns": 7, "requires_evidence": True, "requires_semantic": True},
-    3: {"pressure": 90, "min_turns": 10, "requires_evidence": True, "requires_semantic": False},
+    0: {"pressure": 40, "min_turns": 3, "requires_evidence": False},
+    1: {"pressure": 60, "min_turns": 5, "requires_evidence": True},
+    2: {"pressure": 75, "min_turns": 7, "requires_evidence": True},
+    3: {"pressure": 90, "min_turns": 10, "requires_evidence": True},
 }
+# NOTE: requires_semantic 标志在 Phase 1 中暂不实现，Phase 2 再引入语义匹配
 
 # ──────────────────────────────────────────────
 # 压力系统
@@ -95,49 +97,15 @@ EVIDENCE_PRESSURE_BASE = {
 EVIDENCE_STRENGTH_MULTIPLIER = 0.1  # strength 1-10，乘以 0.1 = 0.1-1.0
 
 # ──────────────────────────────────────────────
-# 经验与等级（Phase 3 完善，此处预留接口）
+# Phase 2+ 配置预留（此处声明类型，值在对应 Phase 添加）
 # ──────────────────────────────────────────────
 
-# 经验曲线：索引=等级，值=该级所需累计经验
-EXPERIENCE_CURVE: List[int] = [
-    0, 50, 120, 200, 300, 450, 600, 800, 1050, 1350,
-    1700, 2100, 2550, 3050, 3600, 4200, 4850, 5550, 6300, 7100,
-]
-
-# 等级解锁内容
-LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
-    1:  {"tools": [], "evidence_uses": 3, "desc": "基础审讯"},
-    2:  {"tools": ["psych_profile"], "evidence_uses": 3, "desc": "心理侧写"},
-    3:  {"tools": [], "evidence_uses": 4, "desc": "证据次数+1"},
-    4:  {"tools": ["lie_detector"], "evidence_uses": 4, "desc": "测谎仪"},
-    5:  {"tools": [], "evidence_uses": 4, "desc": "普通难度解锁"},
-    6:  {"tools": ["fake_evidence"], "evidence_uses": 4, "desc": "伪造证据"},
-    7:  {"tools": [], "evidence_uses": 5, "desc": "施压/共情效果+50%"},
-    8:  {"tools": ["memory_recall"], "evidence_uses": 5, "desc": "记忆回溯"},
-    9:  {"tools": [], "evidence_uses": 5, "desc": "证据次数+1"},
-    10: {"tools": ["silent_pressure"], "evidence_uses": 5, "desc": "沉默施压，困难难度解锁"},
-    11: {"tools": [], "evidence_uses": 5, "desc": "审讯时间+30秒"},
-    12: {"tools": [], "evidence_uses": 6, "desc": "初始压力降低10"},
-    13: {"tools": [], "evidence_uses": 6, "desc": "证据次数+1"},
-    14: {"tools": ["threat"], "evidence_uses": 6, "desc": "威胁"},
-    15: {"tools": ["dual_interrogation"], "evidence_uses": 6, "desc": "多人对质，噩梦难度解锁"},
-    16: {"tools": [], "evidence_uses": 7, "desc": "审讯时间+30秒"},
-    17: {"tools": [], "evidence_uses": 7, "desc": "证据次数+1"},
-    18: {"tools": ["psych_collapse"], "evidence_uses": 7, "desc": "心理崩溃"},
-    19: {"tools": [], "evidence_uses": 7, "desc": "初始压力再降10"},
-    20: {"tools": [], "evidence_uses": 8, "desc": "审讯大师：所有工具次数+1"},
-}
-
-# ──────────────────────────────────────────────
-# 难度分级（Phase 4 完善，此处预留接口）
-# ──────────────────────────────────────────────
-
-DIFFICULTY_PRESETS: Dict[str, Dict[str, Any]] = {
-    "easy":      {"suspects": 2, "time": 360, "evidence_uses": 4, "keywords": 3},
-    "normal":    {"suspects": "2-3", "time": 300, "evidence_uses": 3, "keywords": 2},
-    "hard":      {"suspects": "3-4", "time": 240, "evidence_uses": 3, "keywords": 2},
-    "nightmare": {"suspects": "4+", "time": 180, "evidence_uses": 2, "keywords": 1},
-}
+# REBUTTAL_DECAY_CONFIG: Dict[str, Any] = {}  # Phase 2
+# CHAIN_BONUS: int = 10  # Phase 2
+# TOOL_DEFINITIONS: Dict[str, Dict] = {}  # Phase 3a
+# LEVEL_UNLOCKS: Dict[int, Dict] = {}  # Phase 3b
+# EXPERIENCE_CURVE: List[int] = []  # Phase 3b
+# DIFFICULTY_PRESETS: Dict[str, Dict] = {}  # Phase 4
 ```
 
 ---
@@ -150,48 +118,34 @@ DIFFICULTY_PRESETS: Dict[str, Dict[str, Any]] = {
 
 ### 解决方案
 
-**不再将证据名传入嫌疑人 prompt**，改为传入证据描述和类型。
+**不再将证据名传入嫌疑人 prompt**，改为传入证据描述和类型。压力增量由引擎**程序化计算**，LLM 不再返回 `pressure_change`。
 
-### 1.2.1 修改 `core/suspect_agent.py` — 新增 `respond_evidence` 方法
+### 1.2.1 修改 `core/suspect_agent.py` — 抽取公共 LLM 调用方法
 
-在 `SuspectAgent` 类中新增方法，与现有 `respond()` 并列：
+**新增 `_call_llm` 方法**，消除 `respond()` 与 `respond_evidence()` 的代码重复：
 
 ```python
-def respond_evidence(
-    self, evidence_description: str, evidence_type: str = "unknown"
-) -> dict:
-    """React to presented evidence without seeing the evidence name.
+def _call_llm(self, user_prompt: str) -> dict:
+    """调用 LLM 并解析 JSON 回复。
 
     Args:
-        evidence_description: 证据描述（不含证据名）
-        evidence_type: 证据类型 (physical/document/testimony/unknown)
+        user_prompt: 用户消息内容
 
     Returns:
-        与 respond() 相同格式的 dict
+        包含 reply, secret_triggered 的字典
     """
-    result: Dict = {
+    result = {
         "reply": "",
-        "pressure_change": 0,
         "secret_triggered": None,
-        "rebuttal": False,
-        "rebuttal_believable": None,
     }
 
     if not llm_client.is_initialized:
         result["reply"] = "（嫌疑人沉默不语）"
         return result
 
-    # 构建证据专用的用户消息（不含证据名）
-    evidence_prompt = (
-        f"审讯员向你出示了一件{evidence_type}证据。\n"
-        f"证据内容：{evidence_description}\n\n"
-        "请根据你的角色和所知信息，对这件证据做出反应。"
-    )
-
-    # 使用与 respond() 相同的消息构建逻辑
-    messages = [{"role": "system", "content": self._system_prompt}]
+    messages = [self._get_system_message()]
     messages.extend(self.memory[-10:])
-    messages.append({"role": "user", "content": evidence_prompt})
+    messages.append({"role": "user", "content": user_prompt})
 
     try:
         raw = llm_client.chat_completion(
@@ -209,14 +163,56 @@ def respond_evidence(
         text = text.strip()
         parsed = json.loads(text)
         result["reply"] = str(parsed.get("reply", ""))
-        result["pressure_change"] = int(parsed.get("pressure_change", 0))
         result["secret_triggered"] = parsed.get("secret_triggered")
     except (NetworkError, LLMResponseError, json.JSONDecodeError, ValueError) as exc:
         logger.warning(f"LLM 调用或解析失败: {exc}")
         result["reply"] = "（嫌疑人沉默不语）"
 
+    return result
+```
+
+### 1.2.2 修改 `core/suspect_agent.py` — 改造 `respond()`
+
+```python
+def respond(self, player_input: str, context: Optional[dict] = None) -> dict:
+    """Process player input and return a reply with secret status."""
+    result = self._call_llm(player_input)
+
+    # 压力变化由引擎程序化计算，此处不再处理 pressure_change
     self._postprocess(result)
-    self.pressure = max(0, min(100, self.pressure + result["pressure_change"]))
+    self._append_memory(player_input, result["reply"])
+    self.truncate_memory()
+
+    logger.debug(
+        f"嫌疑人[{self.name}]回复: {result['reply'][:100]}, secret_triggered={result.get('secret_triggered')}"
+    )
+    return result
+```
+
+### 1.2.3 修改 `core/suspect_agent.py` — 新增 `respond_evidence` 方法
+
+```python
+def respond_evidence(
+    self, evidence_description: str, evidence_type: str = "unknown"
+) -> dict:
+    """React to presented evidence without seeing the evidence name.
+
+    Args:
+        evidence_description: 证据描述（不含证据名）
+        evidence_type: 证据类型 (physical/document/testimony/unknown)
+
+    Returns:
+        包含 reply, secret_triggered 的字典
+        （注意：不再返回 pressure_change，压力由引擎程序化计算）
+    """
+    evidence_prompt = (
+        f"审讯员向你出示了一件{evidence_type}证据。\n"
+        f"证据内容：{evidence_description}\n\n"
+        "请根据你的角色和所知信息，对这件证据做出反应。"
+    )
+
+    result = self._call_llm(evidence_prompt)
+    self._postprocess(result)
     self._append_memory(evidence_prompt, result["reply"])
     self.truncate_memory()
 
@@ -225,10 +221,40 @@ def respond_evidence(
 
 **关键区别**：
 - 用户消息不包含证据名称，只包含证据描述和类型
-- 与 `respond()` 共用 `_system_prompt`、`_postprocess`、memory 管理
-- 返回格式与 `respond()` 一致
+- 共用 `_call_llm`、`_postprocess`、memory 管理
+- **不再返回 `pressure_change`**，压力增量完全由引擎程序化计算
+- 返回格式为 `{"reply": str, "secret_triggered": Optional[str]}`
 
-### 1.2.2 修改 `core/interrogation.py` — 重构 `present_evidence` 分支
+### 1.2.4 修改 `core/suspect_agent.py` — 改造 `_postprocess`
+
+**关键修改**：`_postprocess` 与供词系统联动，低供词层级时不触发胜利。
+
+```python
+def _postprocess(self, result: dict) -> None:
+    """Check reply for forbidden substrings and sanitize if matched.
+
+    与供词系统联动：
+    - 供词层级 < 3：替换回复但不触发胜利（仅增加压力）
+    - 供词层级 >= 3：允许触发胜利（完美胜利条件）
+    """
+    reply_lower = result["reply"].lower()
+    for item in self._forbidden_to_reveal:
+        if item.lower() in reply_lower:
+            if self.confession_level >= 3:
+                # 高供词层级：允许触发完整胜利
+                logger.info(f"角色 [{self.name}] 高供词层级下泄露禁止内容: {item}")
+                result["secret_triggered"] = item
+                result["pressure_change"] = 20
+            else:
+                # 低供词层级：替换回复但不触发胜利
+                logger.info(f"角色 [{self.name}] 低供词层级下提及禁止内容，已拦截: {item}")
+                result["reply"] = "（对方略显紧张，但并没有直接回答你的问题。）"
+                result["pressure_change"] = 10
+                result["secret_triggered"] = None
+            return
+```
+
+### 1.2.5 修改 `core/interrogation.py` — 重构 `present_evidence` 分支
 
 **当前代码** (`interrogation.py:78-92`):
 ```python
@@ -273,22 +299,65 @@ if action == "present_evidence":
     evidence_type = evidence.get("type", "unknown")
     result = suspect.respond_evidence(evidence_desc, evidence_type)
 
-    # 根据证据类型和强度计算压力增量（取代硬编码 +20）
+    # 压力增量由引擎程序化计算（取代硬编码 +20 和 LLM 返回的 pressure_change）
+    pressure_delta = 0
     if evidence.get("related_suspect") == suspect.name:
         from core.game_config import EVIDENCE_PRESSURE_BASE, EVIDENCE_STRENGTH_MULTIPLIER
         base = EVIDENCE_PRESSURE_BASE.get(evidence_type, 10)
         strength = evidence.get("strength", 5)
         pressure_delta = int(base * (1 + strength * EVIDENCE_STRENGTH_MULTIPLIER))
-        suspect.pressure = max(0, min(100, suspect.pressure + pressure_delta))
         self.presented_evidence_ids.add(evidence_id)
+
+    old_pressure = suspect.pressure
+    suspect.pressure = max(0, min(100, suspect.pressure + pressure_delta))
+    actual_pressure_change = suspect.pressure - old_pressure
 
     # 扣减证据使用次数
     self.evidence_uses_remaining -= 1
 ```
 
-### 1.2.3 修改 `ui/web_main_window.py` — `_on_evidence_selected`
+### 1.2.6 修改 `core/interrogation.py` — 统一胜利判定入口
 
-**当前代码** (L290-305):
+**新增 `_check_victory` 方法**：
+
+```python
+def _check_victory(self, suspect, result: dict) -> Optional[StateChangeEvent]:
+    """统一检查所有胜利条件。
+
+    胜利条件优先级：
+    1. 供词层级达到 4：完全崩溃（主要胜利条件）
+    2. secret_triggered 且供词层级 >= 3：完美胜利（关键词触发）
+    3. 时间耗尽：失败
+
+    Returns:
+        StateChangeEvent 或 None
+    """
+    # 条件1：供词层级 4
+    if suspect.confession_level >= 4 and self.state != "breakdown":
+        self.state = "breakdown"
+        return StateChangeEvent(
+            type="state_change",
+            new_state="breakdown",
+            verdict_reason=f"{suspect.name} 完全崩溃认罪",
+        )
+
+    # 条件2：secret_triggered + 高供词层级
+    if result.get("secret_triggered") and suspect.confession_level >= 3:
+        self.state = "breakdown"
+        return StateChangeEvent(
+            type="state_change",
+            new_state="breakdown",
+            verdict_reason=f"{suspect.name} 泄露了秘密: {result['secret_triggered']}",
+        )
+
+    return None
+```
+
+在 `submit_action` 末尾调用 `_check_victory` 替代原有的分散判定。
+
+### 1.2.7 修改 `ui/web_main_window.py` — `_on_evidence_selected`
+
+**当前代码** (L332-347):
 ```python
 def _on_evidence_selected(self, evidence_id):
     evidence = self.engine.get_evidence(evidence_id)
@@ -299,6 +368,7 @@ def _on_evidence_selected(self, evidence_id):
 **改为**:
 ```python
 def _on_evidence_selected(self, evidence_id):
+    logger.debug(f"用户出示证据: {evidence_id}")
     if self.engine is None:
         return
 
@@ -307,12 +377,12 @@ def _on_evidence_selected(self, evidence_id):
         self.bridge.show_dialog.emit("提示", "证据出示次数已耗尽")
         return
 
-    evidence = self.engine.get_evidence(evidence_id)
     # 检查是否已出示
     if evidence_id in self.engine.presented_evidence_ids:
         self.bridge.show_dialog.emit("提示", "该证据已出示过")
         return
 
+    evidence = self.engine.get_evidence(evidence_id)
     evidence_name = evidence.get("name", evidence_id) if evidence else evidence_id
     self._start_worker(
         "present_evidence",
@@ -486,7 +556,7 @@ def check_confession_upgrade(self, has_evidence: bool = False) -> Optional[int]:
     Returns:
         升级后的层级，或 None（不升级）
     """
-    from core.game_config import CONFESSION_THRESHOLDS, CONFESSION_PROGRESS_RATE, PRESSURE_SEGMENTS
+    from core.game_config import CONFESSION_THRESHOLDS
 
     if self.confession_level >= 4:
         return None
@@ -548,6 +618,7 @@ suspect.update_confession_progress()
 new_level = suspect.check_confession_upgrade(has_evidence)
 
 if new_level is not None and new_level > old_level:
+    from core.game_config import CONFESSION_LEVELS
     confession_event: ConfessionUpdateEvent = {
         "type": "confession_update",
         "suspect_index": self.current_suspect_index,
@@ -557,15 +628,10 @@ if new_level is not None and new_level > old_level:
     }
     events.append(confession_event)
 
-    # 供词层级达到 4 时触发完美胜利
-    if new_level == 4:
-        self.state = "breakdown"
-        state_event: StateChangeEvent = {
-            "type": "state_change",
-            "new_state": "breakdown",
-            "verdict_reason": f"{suspect.name} 完全崩溃认罪",
-        }
-        events.append(state_event)
+# ── 统一胜利判定 ──
+victory_event = self._check_victory(suspect, result)
+if victory_event:
+    events.append(victory_event)
 ```
 
 ### 1.5.5 修改 `to_dict` / `from_dict`
@@ -654,8 +720,8 @@ updateConfession(level, progress) {
     // 更新进度条
     const barEl = document.getElementById('confession-bar');
     if (barEl) {
-        // 每层 25% 的宽度，加上当前层内的进度
-        const totalProgress = (level * 25) + (progress * 25);
+        // 每层 20% 的宽度，加上当前层内的进度
+        const totalProgress = (level * 20) + (progress * 20);
         barEl.style.width = Math.min(100, totalProgress) + '%';
     }
 
@@ -738,12 +804,12 @@ updateConfession(level, progress) {
 
 ### 解决方案
 
-将系统提示词中的压力值部分改为**每次 `respond()` 时动态注入**，而非在 `__init__` 时固定。
+将系统提示词中的压力值部分改为**每次调用时动态注入**，而非在 `__init__` 时固定。
 
 **修改 `core/suspect_agent.py`**:
 
-1. `_build_system_prompt` 中移除压力值部分，改为占位符 `{pressure_placeholder}`
-2. 在 `respond()` 和 `respond_evidence()` 中，构建 messages 时替换占位符
+1. `_build_system_prompt` 中移除压力值部分，改为占位符 `{pressure_value}`
+2. 在 `_get_system_message()` 中替换占位符
 
 ```python
 def _build_system_prompt(self, suspect_data: dict, case_title: str) -> str:
@@ -761,11 +827,9 @@ def _get_system_message(self) -> dict:
     """构建带有当前压力值的系统消息。"""
     prompt = self._system_prompt.replace("{pressure_value}", str(self.pressure))
     return {"role": "system", "content": prompt}
-
-# 在 respond() 和 respond_evidence() 中：
-# 将 messages = [{"role": "system", "content": self._system_prompt}]
-# 改为 messages = [self._get_system_message()]
 ```
+
+`_call_llm` 中已经使用 `self._get_system_message()`，无需额外修改。
 
 ---
 
@@ -816,7 +880,12 @@ def _get_system_message(self) -> dict:
 
 `to_dict()` / `from_dict()` 需要向后兼容旧存档（没有新字段时使用默认值）。
 
-已在 1.5.4 中通过 `.get("field", default)` 实现。
+已在 1.5.5 中通过 `.get("field", default)` 实现。
+
+**特别注意**：
+- `SuspectAgent.__init__` 中的新字段（`confession_level`, `confession_progress`, `turn_count`）已设置默认值
+- `InterrogationEngine.__init__` 中的 `evidence_uses_remaining` 已使用 `case_data.get("evidence_uses", DEFAULT_EVIDENCE_USES)`
+- 旧存档加载时，缺失的新字段会自动使用默认值
 
 ---
 
@@ -826,25 +895,27 @@ def _get_system_message(self) -> dict:
 
 | 测试文件 | 测试内容 |
 |---------|---------|
-| `tests/test_confession.py` (新) | 供词层级升级逻辑、进度更新 |
-| `tests/test_evidence_rework.py` (新) | respond_evidence 不传证据名、证据次数限制 |
-| `tests/test_game_config.py` (新) | 配置值正确性 |
+| `tests/test_confession.py` (新) | 供词层级升级逻辑、进度更新、阈值边界条件 |
+| `tests/test_evidence_rework.py` (新) | respond_evidence 不传证据名、证据次数限制、压力程序化计算 |
+| `tests/test_game_config.py` (新) | 配置值正确性、默认值 |
+| `tests/test_victory_conditions.py` (新) | `_check_victory` 各条件优先级、低供词层级拦截、高供词层级触发 |
 
 ### 集成测试
 
 | 测试 | 说明 |
 |------|------|
-| 证据出示不触发自动胜利 | 出示含关键词证据后，游戏状态仍为 interrogating |
+| 证据出示不触发自动胜利 | 出示含关键词证据后，`_postprocess` 应拦截（低供词层级） |
 | 证据次数耗尽后无法出示 | 尝试出示应返回系统消息 |
 | 供词层级递进 | 模拟高压+多轮对话，验证层级升级 |
-| 存档/读档兼容 | 新字段序列化/反序列化正确 |
+| 存档/读档兼容 | 新字段序列化/反序列化正确，旧存档加载不崩溃 |
+| 压力动态更新 | 验证 `_get_system_message` 使用当前压力值 |
 
 ### 回归测试
 
 | 测试 | 说明 |
 |------|------|
 | 现有 `test_engine.py` 通过 | 确保不破坏现有逻辑 |
-| 现有 `test_suspect.py` 通过 | respond() 行为不变 |
+| 现有 `test_suspect.py` 通过 | `respond()` 行为不变（除 pressure_change 不再返回） |
 | 现有 `test_web_integration.py` 通过 | UI 事件流正常 |
 
 ---
@@ -852,23 +923,42 @@ def _get_system_message(self) -> dict:
 ## 实施顺序建议
 
 ```
-1.1 game_config.py（无依赖，先建）
+1.1  game_config.py（无依赖，先建，只放Phase 1配置）
     ↓
-1.2 respond_evidence + 引擎重构（核心改动）
+1.2  _call_llm 抽取 + _get_system_message 动态化（基础改造）
     ↓
-1.7 修复静态提示词（与 1.2 同步做）
+1.7  修复静态提示词（与 1.2 同步做）
     ↓
-1.3 证据次数限制（依赖 1.2）
+1.2  respond_evidence + 引擎重构（核心改动）
     ↓
-1.4 已出示标记（依赖 1.3）
+1.2  _postprocess 联动改造 + _check_victory 统一入口（P0修复）
     ↓
-1.8 Schema 扩展（独立，可并行）
+1.3  证据次数限制（依赖 1.2）
     ↓
-1.5 供词层级系统（依赖 1.2）
+1.4  已出示标记（依赖 1.3）
     ↓
-1.6 供词 UI（依赖 1.5）
+1.8  Schema 扩展（独立，可并行）
     ↓
-1.9 存档兼容（依赖 1.2 + 1.5）
+1.5  供词层级系统（依赖 1.2 + _check_victory）
+    ↓
+1.6  供词 UI（依赖 1.5）
+    ↓
+1.9  存档兼容（依赖 1.2 + 1.5）
     ↓
 1.10 测试（最后）
 ```
+
+---
+
+## Phase 1 评审后关键变更对照表
+
+| 变更项 | v1.0 原方案 | v1.1 优化方案 | 原因 |
+|--------|------------|--------------|------|
+| `_postprocess` | 原样保留，触发即胜利 | 低供词层级拦截，>=3才触发 | P0：防止绕过供词系统 |
+| 压力来源 | LLM返回`pressure_change`+引擎硬编码+20 | 引擎程序化计算，LLM不返回 | P1：避免双重计算 |
+| `respond()`/`respond_evidence()` | 各30行重复代码 | 抽取`_call_llm()`公共方法 | P1：消除代码重复 |
+| 胜利判定 | 分散在`submit_action`中 | 统一`_check_victory()`入口 | P1：避免双重判定 |
+| `requires_semantic` | 定义在阈值中但无实现 | Phase 1移除，Phase 2实现 | P1：避免未完成的功能 |
+| `game_config.py` | 包含Phase 1-4所有配置 | 仅Phase 1配置，后续分阶段添加 | P2：减少早期测试负担 |
+
+(End of file - total 643 lines)

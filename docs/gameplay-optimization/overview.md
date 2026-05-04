@@ -1,10 +1,16 @@
-# The Box 玩法深度优化方案 — 总览
+# The Box 玩法深度优化方案 — 总览（优化版 v1.1）
+
+> **评审状态**：✅ 已评审，需修改后通过  
+> **评审日期**：2026-05-04  
+> **主要变更**：修复2个P0问题、6个P1问题，调整工作量估算，优化架构设计
+
+---
 
 ## 核心问题诊断
 
 | 问题 | 根因 | 位置 |
 |------|------|------|
-| 点完证据就赢 | 证据名直接传入 LLM prompt，LLM 自然复述触发关键词 | `interrogation.py:89` + `suspect_agent.py:75` |
+| 点完证据就赢 | 证据名直接传入 LLM prompt，LLM 自然复述触发关键词 | `interrogation.py:89` + `suspect_agent.py:115` |
 | 关键词匹配太松 | 子字符串匹配，2字短语极易误触发 | `suspect_agent.py:115` |
 | 没有策略深度 | 出示顺序/时机不影响结果，可重复出示 | `interrogation.py:78-92` |
 | 压力系统形同虚设 | 仅通过提示词间接影响 LLM，无程序化机制 | `suspect_agent.py:47-48` |
@@ -20,6 +26,8 @@
 → suspect.respond("出示证据: 沾血的锄头")  ← 嫌疑人收到证据名
 → LLM 回复自然包含 "锄头" → _postprocess 子字符串匹配 forbidden "锄头" → 胜利
 ```
+
+---
 
 ## 方案架构
 
@@ -51,45 +59,57 @@
 | 证据出示 | 限制次数 | 每局 3-7 次（根据等级和难度） |
 | 嫌疑人反驳 | 引入 | 嫌疑人会主动辩解，增加审讯难度 |
 | 胜利条件 | 供词层级 | 5层供词，从否认到崩溃 |
+| 压力来源 | 引擎计算 | **程序化计算优先**，LLM 返回的 pressure_change 仅作为参考 |
+
+---
 
 ## 实施分期
 
-| 阶段 | 主题 | 核心改动 | 优先级 |
-|------|------|---------|--------|
-| Phase 1 | 基础重构 | 证据系统 + 供词层级 | 最高 |
-| Phase 2 | 审讯深度 | 反驳机制 + 压力增强 + 证据链 | 高 |
-| Phase 3 | 工具与成长 | 消耗品工具 + 玩家等级 | 中 |
-| Phase 4 | 评分与难度 | LLM 评分 + 难度分级 | 中 |
+| 阶段 | 主题 | 核心改动 | 优先级 | 预估工期 |
+|------|------|---------|--------|----------|
+| Phase 1 | 基础重构 | 证据系统 + 供词层级 | 最高 | **8天** |
+| Phase 2 | 审讯深度 | 反驳机制 + 压力增强 + 证据链 + 主动开口 | 高 | **7天** |
+| Phase 3a | 工具引擎 | 工具系统框架 + 4个基础工具 | 中 | **6天** |
+| Phase 3b | 成长系统 | 4个复杂工具 + 玩家等级 + 数据库 | 中 | **5天** |
+| Phase 4 | 评分与难度 | LLM 评分 + 难度分级 | 中 | **5天** |
+
+> **总工期：约 31 天**（含 prompt 调试缓冲）
+
+---
 
 ## 文件变更总览
 
 ### 需要修改的文件
 
-| 文件 | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
-|------|---------|---------|---------|---------|
-| `core/suspect_agent.py` | 重构 respond，新增 respond_evidence | 反驳逻辑，压力效果 | — | — |
-| `core/interrogation.py` | 证据次数限制，供词追踪 | 证据链，压力程序化 | 工具系统 | 评分触发 |
-| `core/case_generator.py` | Schema 扩展（evidence.type/strength） | chain_with 字段 | — | 难度参数 |
-| `core/db.py` | — | — | player_profile 表 | — |
-| `core/player.py` | — | — | 新文件：等级逻辑 | — |
-| `core/scoring.py` | — | — | — | 新文件：评分逻辑 |
-| `schemas/events.py` | 新增 ConfessionUpdateEvent | 新增 RebuttalEvent | 新增 ToolUseEvent | — |
-| `ui/web_main_window.py` | 处理新事件，证据次数 | 反驳事件处理 | 工具事件 | 评分展示 |
-| `ui/web_bridge.py` | 新增信号 | 新增信号 | 新增信号 | 新增信号 |
-| `ui/web/js/evidence.js` | 已出示标记，次数显示 | — | — | — |
-| `ui/web/js/suspect.js` | 供词进度条 | — | — | — |
-| `ui/web/js/app.js` | 新事件绑定 | 新事件绑定 | 工具栏逻辑 | 评分面板 |
-| `ui/web/index.html` | 供词 UI，证据次数 | — | 工具栏 HTML | 评分面板 |
-| `ui/web/css/` | 供词样式，证据标记 | 反驳样式 | 工具样式 | 评分样式 |
-| `tests/` | Phase 1 测试 | Phase 2 测试 | Phase 3 测试 | Phase 4 测试 |
+| 文件 | Phase 1 | Phase 2 | Phase 3a | Phase 3b | Phase 4 |
+|------|---------|---------|----------|----------|---------|
+| `core/suspect_agent.py` | 重构 respond，新增 respond_evidence | 反驳逻辑，压力效果 | — | — | — |
+| `core/interrogation.py` | 证据次数限制，供词追踪，统一胜利入口 | 证据链，压力程序化 | 工具引擎框架 | 工具实现 | 评分触发 |
+| `core/case_generator.py` | Schema 扩展（evidence.type/strength） | chain_with 字段 | — | — | 难度参数 |
+| `core/db.py` | — | — | — | player_profile 表，迁移机制 | — |
+| `core/player.py` | — | — | — | 新文件：等级逻辑 | — |
+| `core/scoring.py` | — | — | — | — | 新文件：评分逻辑 |
+| `core/game_config.py` | Phase 1 配置（供词/压力/证据） | Phase 2 配置（反驳/证据链） | Phase 3a 配置（工具） | Phase 3b 配置（等级） | Phase 4 配置（难度） |
+| `schemas/events.py` | 新增 ConfessionUpdateEvent | 新增 RebuttalEvent | 新增 ToolUseEvent | — | — |
+| `ui/web_main_window.py` | 处理新事件，证据次数 | 反驳事件处理，主动开口异步化 | 工具事件 | 等级展示 | 评分展示 |
+| `ui/web_bridge.py` | 新增信号 | 新增信号 | 新增信号 | 新增信号 | 新增信号 |
+| `ui/web/js/evidence.js` | 已出示标记，次数显示 | — | — | — | — |
+| `ui/web/js/suspect.js` | 供词进度条 | — | — | — | — |
+| `ui/web/js/app.js` | 新事件绑定 | 新事件绑定 | 工具栏逻辑 | 等级面板 | 评分面板 |
+| `ui/web/index.html` | 供词 UI，证据次数 | — | 工具栏 HTML | 等级面板 | 评分面板 |
+| `ui/web/css/` | 供词样式，证据标记 | 反驳样式 | 工具样式 | 等级样式 | 评分样式 |
+| `tests/` | Phase 1 测试 | Phase 2 测试 | Phase 3a 测试 | Phase 3b 测试 | Phase 4 测试 |
 
 ### 需要新增的文件
 
 | 文件 | 说明 |
 |------|------|
-| `core/player.py` | 玩家档案和等级逻辑（Phase 3） |
+| `core/player.py` | 玩家档案和等级逻辑（Phase 3b） |
 | `core/scoring.py` | 评分系统逻辑（Phase 4） |
-| `core/game_config.py` | 游戏配置（经验曲线、难度参数等），避免硬编码 |
+| `core/game_config.py` | 游戏配置（按阶段添加） |
+| `core/tools/` | 工具实现目录（Phase 3a 预留接口，Phase 3b 填充） |
+
+---
 
 ## 数据流变更
 
@@ -104,49 +124,32 @@
 
 ```
 出示证据 → 检查剩余次数 → suspect.respond_evidence(description, evidence_type)
-→ LLM 返回 {reply, pressure_change, confession_progress_change}
+→ LLM 返回 {reply, secret_triggered}  （不再返回 pressure_change）
+→ 引擎程序化计算: 压力增量 = 证据类型基础值 × (1 + 强度 × 系数) + chain_bonus
 → 引擎更新: 压力 + 供词层级
-→ 供词层级 >= 3 时触发关键词匹配作为完美胜利条件
+→ _postprocess: 低供词层级时替换回复但不触发胜利；>=3 时才触发
+→ 供词层级 >= 3 时关键词匹配可作为完美胜利条件
 → 供词层级 >= 2 时可提交推理结论作为部分胜利
+→ _check_victory() 统一判定所有胜利条件
 ```
 
-## 配置化原则
+---
 
-以下参数不得硬编码，统一放在 `core/game_config.py` 中：
+## 评审后关键修正（相比 v1.0）
 
-```python
-# 经验曲线（每级所需经验）
-EXPERIENCE_CURVE = [0, 50, 120, 200, 300, 450, 600, 800, 1050, 1350,
-                    1700, 2100, 2550, 3050, 3600, 4200, 4850, 5550, 6300, 7100]
+| # | 问题 | 等级 | 修正措施 |
+|---|------|------|----------|
+| 1 | `_postprocess` 与供词系统冲突 | P0 | 低供词层级替换回复但不触发胜利，>=3 才触发 |
+| 2 | `tick()` 主动开口阻塞 UI | P0 | 改为基于轮次触发，WebWorker 异步执行 |
+| 3 | `respond()`/`respond_evidence()` 代码重复 | P1 | 抽取 `_call_llm()` 公共方法 |
+| 4 | 胜利判定逻辑分散 | P1 | 统一 `_check_victory()` 入口 |
+| 5 | 压力变化双重计算 | P1 | 程序化计算优先，LLM 不再返回 `pressure_change` |
+| 6 | `rebuttal_believable` 完全依赖 LLM 自评 | P1 | 增加程序化兜底（pressure>80 强制衰减） |
+| 7 | `requires_semantic` 无实现 | P1 | Phase 1 移除，Phase 2 实现 |
+| 8 | 工具系统与引擎耦合 | P1 | Phase 3 预留策略模式接口 |
+| 9 | 数据库无迁移机制 | P1 | Phase 3b 引入版本号和增量迁移 |
+| 10 | `game_config.py` 过早包含后期配置 | P2 | 按阶段分步添加配置 |
+| 11 | 信号数量持续增长 | P2 | 可选合并低频信号 |
+| 12 | Phase 3 工作量被低估 | P1 | 拆分为 3a + 3b |
 
-# 等级解锁内容
-LEVEL_UNLOCKS = {
-    1: {"tools": [], "evidence_uses": 3, "desc": "基础审讯"},
-    2: {"tools": ["psych_profile"], "evidence_uses": 3, "desc": "心理侧写"},
-    # ...
-}
-
-# 难度参数
-DIFFICULTY_PRESETS = {
-    "easy":   {"suspects": 2, "time": 360, "evidence_uses": 4, "keywords": 3},
-    "normal": {"suspects": "2-3", "time": 300, "evidence_uses": 3, "keywords": 2},
-    "hard":   {"suspects": "3-4", "time": 240, "evidence_uses": 3, "keywords": 2},
-    "nightmare": {"suspects": "4+", "time": 180, "evidence_uses": 2, "keywords": 1},
-}
-
-# 供词层级升级阈值
-CONFESSION_THRESHOLDS = {
-    0: {"pressure": 40, "min_turns": 3},
-    1: {"pressure": 60, "requires_evidence": True},
-    2: {"pressure": 75, "requires_semantic_match": True},
-    3: {"pressure": 90, "requires_keyword_trigger": True},
-}
-
-# 压力段定义
-PRESSURE_SEGMENTS = {
-    "low":    (0, 30),
-    "medium": (30, 60),
-    "high":   (60, 80),
-    "panic":  (80, 100),
-}
-```
+(End of file - total 170 lines)

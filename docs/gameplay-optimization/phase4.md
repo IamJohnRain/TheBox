@@ -1,4 +1,6 @@
-# Phase 4：评分与难度 — LLM 评分 + 难度分级
+# Phase 4：评分与难度 — LLM 评分 + 难度分级（优化版 v1.1）
+
+> **评审变更**：evidence_usage改为相关证据占比、best_grade数值映射、memory_summary截断、confession_depth非线性映射、难度解锁节奏说明
 
 ## 前置依赖
 
@@ -40,7 +42,7 @@ logger = logging.getLogger(__name__)
 SCORING_DIMENSIONS = {
     "confession_depth": {"weight": 0.30, "desc": "供词深度：最终供词层级"},
     "time_efficiency": {"weight": 0.20, "desc": "时间效率：剩余时间占比"},
-    "evidence_usage": {"weight": 0.20, "desc": "证据利用：正确出示的证据占比"},
+    "evidence_usage": {"weight": 0.20, "desc": "证据利用：正确出示的相关证据占比"},
     "interrogation_strategy": {"weight": 0.15, "desc": "审讯策略：工具使用、施压共情交替"},
     "reasoning_accuracy": {"weight": 0.15, "desc": "推理准确：玩家推理与真相吻合度"},
 }
@@ -53,6 +55,9 @@ GRADE_THRESHOLDS = [
     ("C", 40),
     ("D", 0),
 ]
+
+# 评级数值映射（用于比较）
+GRADE_VALUE = {"S": 5, "A": 4, "B": 3, "C": 2, "D": 1}
 
 # 评级经验系数
 GRADE_EXP_MULTIPLIER = {
@@ -70,13 +75,13 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
     Args:
         session_data: 包含以下字段的字典:
             - truth: 案件真相
-            - memory_summary: 对话摘要
+            - memory_summary: 对话摘要（已截断）
             - presented_evidence: 已出示证据列表
+            - related_evidence_count: 与当前嫌疑人相关的证据总数
             - used_tools: 已使用工具列表
             - confession_level: 最终供词层级
             - time_left: 剩余时间
             - total_time: 总时间
-            - total_evidence: 总证据数
             - suspect_name: 被审讯嫌疑人名
 
     Returns:
@@ -91,14 +96,18 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
     total_time = session_data.get("total_time", 1)
     scores["time_efficiency"] = min(100, int((time_left / max(total_time, 1)) * 100))
 
-    # 证据利用
+    # 证据利用（修正v1.1：基于相关证据而非总证据）
     presented = len(session_data.get("presented_evidence", []))
-    total_ev = session_data.get("total_evidence", 1)
-    scores["evidence_usage"] = min(100, int((presented / max(total_ev, 1)) * 100))
+    related_count = session_data.get("related_evidence_count", 0)
+    if related_count > 0:
+        scores["evidence_usage"] = min(100, int((presented / related_count) * 100))
+    else:
+        scores["evidence_usage"] = 0
 
-    # 供词深度
+    # 供词深度（非线性映射：层级4=100，层级3=85，层级2=65，层级1=40，层级0=15）
     confession_level = session_data.get("confession_level", 0)
-    scores["confession_depth"] = min(100, confession_level * 25)
+    confession_score_map = {0: 15, 1: 40, 2: 65, 3: 85, 4: 100}
+    scores["confession_depth"] = confession_score_map.get(confession_level, 0)
 
     # ── LLM 判断的维度 ──
 
@@ -124,9 +133,17 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
         "dimensions": scores,
         "total_score": total,
         "grade": grade,
+        "grade_value": GRADE_VALUE[grade],
         "exp_multiplier": GRADE_EXP_MULTIPLIER.get(grade, 1.0),
         "detail": llm_scores.get("detail", ""),
     }
+
+
+def _truncate_memory(memory_text: str, max_chars: int = 2000) -> str:
+    """截断对话摘要，控制 token 消耗。"""
+    if len(memory_text) <= max_chars:
+        return memory_text
+    return memory_text[:max_chars] + "\n...（对话记录已截断）"
 
 
 def _llm_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -135,7 +152,7 @@ def _llm_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
         return {"interrogation_strategy": 50, "reasoning_accuracy": 50, "detail": "LLM 未初始化"}
 
     truth = session_data.get("truth", "")
-    memory = session_data.get("memory_summary", "")
+    memory = _truncate_memory(session_data.get("memory_summary", ""))
     tools = session_data.get("used_tools", [])
 
     prompt = f"""你是一个游戏评分专家。请对以下审讯表现进行评分。
@@ -183,20 +200,35 @@ def _llm_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
 修改 `_handle_ending` 方法，在结局对话框中展示评分：
 
 ```python
-def _handle_ending(self, event):
-    # ... 现有逻辑 ...
+def _handle_ending(self, state_event):
+    self._countdown_timer.stop()
+    self.bridge.set_game_interactive.emit(False)
 
     # 计算评分
     from core.scoring import calculate_score
+    suspect = self.engine.suspects[self.engine.current_suspect_index]
+
+    # 计算相关证据数
+    related_evidence_count = sum(
+        1 for e in self.engine.case.get("evidences", [])
+        if e.get("related_suspect") == suspect.name
+    )
+
+    # 构建对话摘要（从 suspect.memory 提取）
+    memory_summary = "\n".join(
+        f"{'审讯员' if m['role'] == 'user' else suspect.name}: {m['content']}"
+        for m in suspect.memory
+    )
+
     score_data = calculate_score({
         "truth": self.engine.case.get("truth", ""),
-        "memory_summary": self._get_memory_summary(),
+        "memory_summary": memory_summary,
         "presented_evidence": list(self.engine.presented_evidence_ids),
+        "related_evidence_count": related_evidence_count,
         "used_tools": self.engine.used_tools,
         "confession_level": suspect.confession_level,
         "time_left": self.engine.time_left,
         "total_time": self.engine.case.get("interrogation_time_limit_sec", 300),
-        "total_evidence": len(self.engine.case.get("evidences", [])),
         "suspect_name": suspect.name,
     })
 
@@ -247,9 +279,11 @@ total_exp = int((base_exp + evidence_exp + completion_exp) * grade_multiplier)
 # 更新玩家档案
 self.player.add_experience(total_exp)
 self.player.total_sessions += 1
-if event.get("new_state") == "breakdown":
+if state_event.get("new_state") == "breakdown":
     self.player.successful_sessions += 1
-if score_data["grade"] < self.player.best_grade:
+
+# 使用数值映射比较评级（修正v1.1）
+if score_data["grade_value"] > GRADE_VALUE.get(self.player.best_grade, 0):
     self.player.best_grade = score_data["grade"]
 self.player.save()
 ```
@@ -279,7 +313,27 @@ difficulty_constraints = {
 
 ### 难度解锁
 
-在 `game_config.py` 中定义解锁等级（已在 Phase 1 预留）。
+在 `game_config.py` 中定义解锁等级：
+
+```python
+# core/game_config.py — Phase 4 添加
+
+DIFFICULTY_PRESETS: Dict[str, Dict[str, Any]] = {
+    "easy":      {"suspects": 2, "time": 360, "evidence_uses": 4, "keywords": 3, "unlock_level": 1},
+    "normal":    {"suspects": "2-3", "time": 300, "evidence_uses": 3, "keywords": 2, "unlock_level": 5},
+    "hard":      {"suspects": "3-4", "time": 240, "evidence_uses": 3, "keywords": 2, "unlock_level": 10},
+    "nightmare": {"suspects": "4+", "time": 180, "evidence_uses": 2, "keywords": 1, "unlock_level": 15},
+}
+```
+
+### 解锁节奏说明
+
+- **Lv.1-4**：简单难度，熟悉基础机制（约 5-10 局，30-60分钟）
+- **Lv.5-9**：普通难度，引入反驳机制（约 10-15 局，累计 1.5-2小时）
+- **Lv.10-14**：困难难度，完整策略体验（约 15-20 局，累计 3-4小时）
+- **Lv.15+**：噩梦难度，挑战极限
+
+> 此节奏基于每局约5分钟、经验获取约30-50点的估算。实际节奏需根据试玩数据调整。
 
 ---
 
@@ -299,7 +353,19 @@ difficulty_constraints = {
 </div>
 ```
 
-根据玩家等级动态启用/禁用选项。
+根据玩家等级动态启用/禁用选项：
+
+```javascript
+function updateDifficultyOptions(playerLevel) {
+    const presets = {
+        easy: 1, normal: 5, hard: 10, nightmare: 15
+    };
+    document.querySelectorAll('#difficulty-select option').forEach(opt => {
+        const required = presets[opt.value];
+        opt.disabled = playerLevel < required;
+    });
+}
+```
 
 ---
 
@@ -307,9 +373,26 @@ difficulty_constraints = {
 
 | 测试 | 说明 |
 |------|------|
-| 规则维度计算 | 时间效率、证据利用、供词深度的分数正确 |
-| LLM 评分降级 | LLM 不可用时使用默认分数 |
+| 规则维度计算 | 时间效率、证据利用（相关证据）、供词深度的分数正确 |
+| 证据利用基于相关证据 | 验证出示无关证据不计入分子 |
+| LLM 评分降级 | LLM 不可用时使用默认分数 50 |
 | 评级阈值 | 各分数段对应正确评级 |
 | 经验结算 | 经验计算和等级提升正确 |
+| best_grade 数值比较 | 验证 S > A > B > C > D |
 | 难度参数传递 | 不同难度生成不同参数的案件 |
 | 难度解锁 | 等级不足时难度选项不可选 |
+| memory_summary 截断 | 验证超长对话正确截断 |
+
+---
+
+## Phase 4 评审后关键变更对照表
+
+| 变更项 | v1.0 原方案 | v1.1 优化方案 | 原因 |
+|--------|------------|--------------|------|
+| `evidence_usage` | 出示数/总证据数 | 出示数/相关证据数 | P1：更准确反映策略 |
+| `confession_depth` | `level * 25`（线性） | 非线性映射（0=15,1=40,2=65,3=85,4=100） | P2：缩小层级间差距 |
+| `best_grade` | 字符串比较 | 数值映射比较 | P2：支持未来扩展（SS等） |
+| `memory_summary` | 完整传入 | 截断至2000字符 | P2：控制token消耗 |
+| 难度解锁节奏 | 未说明 | 明确各阶段预计局数和时间 | 增强：帮助设计验证 |
+
+(End of file - total 324 lines)
