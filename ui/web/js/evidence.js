@@ -97,9 +97,6 @@ class EvidenceManager {
         card.setAttribute('data-evidence-id', evidence.id);
         card.setAttribute('tabindex', '0');
 
-        const desc = evidence.description || '';
-        const DESC_COLLAPSE_THRESHOLD = 60;
-
         card.innerHTML = `
             <div class="evidence-header">
                 <div class="evidence-icon">
@@ -114,14 +111,21 @@ class EvidenceManager {
                 <h4 class="evidence-title">${this._escapeHtml(evidence.name || '未知证据')}</h4>
             </div>
             <p class="evidence-description">${this._escapeHtml(evidence.description || '')}</p>
-            ${desc.length > DESC_COLLAPSE_THRESHOLD ? '<button class="evidence-expand-btn">展开</button>' : ''}
+            <button class="evidence-expand-btn" style="display:none;">展开</button>
         `;
 
+        const descEl = card.querySelector('.evidence-description');
         const expandBtn = card.querySelector('.evidence-expand-btn');
+
+        requestAnimationFrame(() => {
+            if (descEl && descEl.scrollHeight > descEl.clientHeight + 4) {
+                expandBtn.style.display = 'inline-block';
+            }
+        });
+
         if (expandBtn) {
             expandBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const descEl = card.querySelector('.evidence-description');
                 if (descEl.classList.contains('expanded')) {
                     descEl.classList.remove('expanded');
                     expandBtn.textContent = '展开';
@@ -155,24 +159,34 @@ class EvidenceManager {
      * @param {{id: string, name: string}} evidence - 证据数据
      */
     _onEvidenceClick(evidence) {
-        // 使用 ModalManager 的确认对话框
-        if (window.modalManager) {
-            window.modalManager.showConfirm(
-                '出示证据',
-                `确定要出示「${evidence.name || '未知证据'}」吗？`,
-                () => {
-                    if (window.bridge) {
-                        window.bridge.presentEvidence(evidence.id);
-                    }
+        if (!window.modalManager) return;
+        const modal = window.modalManager;
+        const bodyHtml = `
+            <div class="evidence-detail-modal">
+                <div class="evidence-detail-header">
+                    <div class="evidence-detail-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                    </div>
+                    <h3 class="evidence-detail-title">${modal._escapeHtml(evidence.name || '未知证据')}</h3>
+                </div>
+                <div class="evidence-detail-body">
+                    <p>${modal._escapeHtml(evidence.description || '暂无详情')}</p>
+                </div>
+            </div>
+        `;
+        modal._show(evidence.name || '证据详情', bodyHtml, [
+            { text: '出示证据', class: 'modal-btn-primary modal-btn-full', callback: () => {
+                if (window.bridge) {
+                    window.bridge.presentEvidence(evidence.id);
                 }
-            );
-        } else {
-            // 降级处理：直接 confirm
-            const confirmed = confirm(`确定要出示「${evidence.name || '未知证据'}」吗？`);
-            if (confirmed && window.bridge) {
-                window.bridge.presentEvidence(evidence.id);
-            }
-        }
+            }},
+        ]);
     }
 
     /**

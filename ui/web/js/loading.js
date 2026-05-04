@@ -91,7 +91,10 @@ class LoadingManager {
         }
 
         // 显示遮罩
-        this.overlay.classList.add('active');
+        if (this.overlay) {
+            this.overlay.style.pointerEvents = '';
+            this.overlay.classList.add('active');
+        }
 
         // 启动进度更新
         this._startProgressUpdate();
@@ -103,6 +106,7 @@ class LoadingManager {
     hide() {
         if (this.overlay) {
             this.overlay.classList.remove('active');
+            this.overlay.style.pointerEvents = 'none';
         }
 
         // 停止进度更新

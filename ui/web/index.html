@@ -40,17 +40,11 @@
                     </svg>
                     <span>生成案件</span>
                 </button>
-                <button class="nav-btn" id="btn-save" title="保存进度">
+                <button class="nav-btn" id="btn-save" title="存档管理">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <use href="assets/icons/save.svg#icon"/>
                     </svg>
                     <span>存档</span>
-                </button>
-                <button class="nav-btn" id="btn-load" title="加载存档">
-                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <use href="assets/icons/load.svg#icon"/>
-                    </svg>
-                    <span>读档</span>
                 </button>
                 <button class="nav-btn" id="btn-settings" title="设置">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -77,11 +71,8 @@
             <aside class="sidebar-left" role="complementary" aria-label="嫌疑人信息">
                 <!-- Suspect Selector -->
                 <div class="suspect-selector-wrapper" style="padding: var(--space-4);">
-                    <select class="suspect-selector" id="suspect-selector" aria-label="选择嫌疑人">
-                        <option value="">选择嫌疑人...</option>
-                        <option value="suspect-1">张三</option>
-                        <option value="suspect-2">李四</option>
-                        <option value="suspect-3">王五</option>
+                    <select class="suspect-selector" id="suspect-selector" aria-label="选择嫌疑人" disabled>
+                        <option value="" disabled selected>选择嫌疑人...</option>
                     </select>
                 </div>
 

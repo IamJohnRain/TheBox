@@ -514,7 +514,9 @@ class WebMainWindow(QMainWindow):
         self._review_worker = None
         self.bridge.hide_loading.emit()
 
-        # 将案件真相追加到复盘数据中
+        QTimer.singleShot(350, lambda: self._emit_show_review(review_data))
+
+    def _emit_show_review(self, review_data):
         if self.engine is not None:
             case_data = self.engine.case
             review_data["caseTruth"] = {
@@ -531,7 +533,7 @@ class WebMainWindow(QMainWindow):
         """复盘报告生成失败。"""
         self._review_worker = None
         self.bridge.hide_loading.emit()
-        self.bridge.show_dialog.emit("复盘失败", f"生成复盘报告失败: {error_msg}")
+        QTimer.singleShot(350, lambda: self.bridge.show_dialog.emit("复盘失败", f"生成复盘报告失败: {error_msg}"))
 
     # ================================================================
     # Settings - WebView Modal
@@ -649,10 +651,7 @@ class WebMainWindow(QMainWindow):
         logger.info(f"案件生成成功: {case_dict.get('title', '未知')}")
         self.bridge.case_generation_complete.emit(case_dict)
         self._case_gen_worker = None
-        # 直接加载案件，不再使用延迟定时器
-        # JS 端的 updateGenerationComplete 会关闭模态框
-        # load_case 会通过 init_full_state + show_case_briefing 更新 UI
-        self.load_case(case_dict)
+        QTimer.singleShot(350, lambda: self.load_case(case_dict))
 
     def _on_case_generation_error(self, error_msg):
         """案件生成失败。"""
@@ -686,20 +685,15 @@ class WebMainWindow(QMainWindow):
     # ================================================================
 
     def _on_save_game(self):
-        """存档 - 查找空槽位或弹出槽位选择。"""
-        if self.engine is None:
-            return
+        """存档管理 - 显示所有槽位供用户选择操作。"""
         try:
-            empty_slot = db.find_first_empty_slot()
-            if empty_slot is not None:
-                self._do_save_to_slot(empty_slot)
-            else:
-                slots = db.list_all_slots()
-                formatted = self._format_slots(slots)
-                self.bridge.show_save_slots.emit({"slots": formatted, "_saveMode": True})
+            slots = db.list_all_slots()
+            formatted = self._format_slots(slots)
+            has_active = self.engine is not None
+            self.bridge.show_save_slots.emit({"slots": formatted, "_hasActiveGame": has_active})
         except Exception as exc:
-            logger.error(f"存档失败: {exc}")
-            self.bridge.show_dialog.emit("存档失败", f"保存失败: {exc}")
+            logger.error(f"获取存档列表失败: {exc}")
+            self.bridge.show_dialog.emit("存档失败", f"无法读取存档列表: {exc}")
 
     def _on_save_to_slot(self, slot_number: int):
         """保存到指定槽位。"""
@@ -736,15 +730,8 @@ class WebMainWindow(QMainWindow):
             self.bridge.show_dialog.emit("删除失败", f"删除失败: {exc}")
 
     def _on_load_game(self):
-        """读档 - 显示存档槽位列表。"""
-        logger.info("请求读档列表")
-        try:
-            slots = db.list_all_slots()
-            formatted = self._format_slots(slots)
-            self.bridge.show_save_slots.emit({"slots": formatted, "_saveMode": False})
-        except Exception as exc:
-            logger.error(f"获取存档列表失败: {exc}")
-            self.bridge.show_dialog.emit("读档失败", f"无法读取存档列表: {exc}")
+        """读档 - 显示存档槽位列表（同存档管理入口）。"""
+        self._on_save_game()
 
     def _format_slots(self, slots):
         """Format slot data for the frontend."""
@@ -847,6 +834,12 @@ class WebMainWindow(QMainWindow):
 
             if self.engine.state == "interrogating":
                 self._countdown_timer.start()
+            elif self.engine.state in ("breakdown", "verdict"):
+                if self.engine.state == "breakdown":
+                    ending_msg = "破案成功！真凶已经崩溃认罪。"
+                else:
+                    ending_msg = "时间耗尽！律师介入，案件被迫终止。"
+                QTimer.singleShot(400, lambda: self.bridge.show_ending_dialog.emit("审讯结束", ending_msg))
         except Exception as exc:
             logger.error(f"加载存档失败: {exc}")
             self.bridge.show_dialog.emit("读档失败", f"加载失败: {exc}")

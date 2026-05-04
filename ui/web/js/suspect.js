@@ -76,8 +76,22 @@ class SuspectManager {
             return;
         }
 
-        // 清空并重建选项
-        this.selector.innerHTML = '<option value="">选择嫌疑人...</option>';
+        this.selector.innerHTML = '';
+
+        if (this.suspects.length === 0) {
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '选择嫌疑人...';
+            placeholder.disabled = true;
+            placeholder.selected = true;
+            this.selector.appendChild(placeholder);
+            this.selector.disabled = true;
+            this.currentIndex = -1;
+            this._resetDisplay();
+            return;
+        }
+
+        this.selector.disabled = false;
 
         this.suspects.forEach((suspect, index) => {
             const option = document.createElement('option');
@@ -86,7 +100,6 @@ class SuspectManager {
             this.selector.appendChild(option);
         });
 
-        // 自动选中第一个嫌疑人
         if (this.suspects.length > 0) {
             this.selectSuspect(0);
         } else {
@@ -174,7 +187,8 @@ class SuspectManager {
         this.currentIndex = -1;
 
         if (this.selector) {
-            this.selector.innerHTML = '<option value="">选择嫌疑人...</option>';
+            this.selector.innerHTML = '<option value="" disabled selected>选择嫌疑人...</option>';
+            this.selector.disabled = true;
         }
 
         this._resetDisplay();

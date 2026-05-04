@@ -12,6 +12,8 @@ class ModalManager {
         this.footerEl = document.getElementById('modal-footer');
         this.closeBtn = document.getElementById('modal-close');
         this._confirmCallback = null;
+        this._isGenerating = false;
+        this._genCancelConfirm = null;
         this._bindEvents();
     }
 
@@ -24,23 +26,136 @@ class ModalManager {
         return wrapper;
     }
 
+    _createGenCancelConfirm() {
+        const existing = document.getElementById('gen-cancel-confirm');
+        if (existing) return existing;
+
+        const confirm = document.createElement('div');
+        confirm.id = 'gen-cancel-confirm';
+        confirm.className = 'modal';
+        confirm.setAttribute('role', 'dialog');
+        confirm.setAttribute('aria-modal', 'true');
+        confirm.setAttribute('aria-labelledby', 'gen-cancel-confirm-title');
+        confirm.innerHTML = `
+            <header class="modal-header">
+                <h3 class="modal-title" id="gen-cancel-confirm-title">确认取消生成？</h3>
+                <button class="modal-close" id="gen-cancel-confirm-close" aria-label="关闭">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </header>
+            <div class="modal-body" id="gen-cancel-confirm-body">
+                <p>案件正在生成中，确定要取消吗？</p>
+            </div>
+            <footer class="modal-footer" id="gen-cancel-confirm-footer">
+                <button class="modal-btn modal-btn-primary" id="gen-cancel-confirm-ok">确认</button>
+                <button class="modal-btn modal-btn-secondary" id="gen-cancel-confirm-cancel">取消</button>
+            </footer>
+        `;
+        document.body.appendChild(confirm);
+        return confirm;
+    }
+
     _bindEvents() {
         if (this.closeBtn) {
-            this.closeBtn.addEventListener('click', () => this.hide());
+            this.closeBtn.addEventListener('click', () => this._requestHide());
         }
 
         if (this.backdrop) {
-            this.backdrop.addEventListener('click', () => this.hide());
+            this.backdrop.addEventListener('click', () => {
+                if (this._isGenerating) return;
+                this.hide();
+            });
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this._isVisible()) {
-                this.hide();
+            if (e.key === 'Escape') {
+                if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
+                    this._hideGenCancelConfirm(false);
+                    return;
+                }
+                if (this._isVisible()) {
+                    if (this._isGenerating) return;
+                    this.hide();
+                }
             }
         });
     }
 
+    _requestHide() {
+        if (this._isGenerating) {
+            this._showGenCancelConfirm();
+        } else {
+            this.hide();
+        }
+    }
+
+    _showGenCancelConfirm() {
+        this._genCancelConfirm = this._createGenCancelConfirm();
+        if (this.modal) {
+            this.modal.style.display = 'none';
+        }
+        if (this.backdrop) {
+            this.backdrop.style.display = 'none';
+        }
+        if (this.wrapper) {
+            this.wrapper.style.display = 'none';
+        }
+        this._genCancelConfirm.style.display = '';
+
+        const closeBtn = document.getElementById('gen-cancel-confirm-close');
+        if (closeBtn) {
+            closeBtn.onclick = () => this._hideGenCancelConfirm(false);
+        }
+
+        const okBtn = document.getElementById('gen-cancel-confirm-ok');
+        if (okBtn) {
+            okBtn.onclick = () => this._hideGenCancelConfirm(true);
+        }
+
+        const cancelBtn = document.getElementById('gen-cancel-confirm-cancel');
+        if (cancelBtn) {
+            cancelBtn.onclick = () => this._hideGenCancelConfirm(false);
+        }
+    }
+
+    _hideGenCancelConfirm(shouldCancel) {
+        if (shouldCancel) {
+            this._cancelGeneration();
+        }
+
+        if (this._genCancelConfirm) {
+            this._genCancelConfirm.style.display = 'none';
+        }
+
+        if (this.modal) {
+            this.modal.style.display = '';
+        }
+        if (this.backdrop) {
+            this.backdrop.style.display = '';
+        }
+        if (this.wrapper) {
+            this.wrapper.style.display = '';
+        }
+
+        if (shouldCancel) {
+            this._isGenerating = false;
+            this.hide();
+        }
+    }
+
+    _cancelGeneration() {
+        if (window.bridge) {
+            window.bridge.cancelCaseGeneration();
+        }
+        this._isGenerating = false;
+    }
+
     _isVisible() {
+        if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
+            return true;
+        }
         return this.modal && this.modal.classList.contains('active');
     }
 
@@ -57,13 +172,17 @@ class ModalManager {
     showConfirm(title, message, onConfirm) {
         this._confirmCallback = onConfirm;
         this._show(title, `<p>${this._escapeHtml(message)}</p>`, [
-            { text: '取消', class: 'modal-btn-secondary', callback: null },
             { text: '确认', class: 'modal-btn-primary', callback: () => {
-                if (typeof this._confirmCallback === 'function') {
-                    this._confirmCallback();
+                try {
+                    if (typeof this._confirmCallback === 'function') {
+                        this._confirmCallback();
+                    }
+                } catch (e) {
+                    console.error('[Modal] Confirm callback error:', e);
                 }
                 this._confirmCallback = null;
             }},
+            { text: '取消', class: 'modal-btn-secondary', callback: null },
         ]);
     }
 
@@ -71,18 +190,24 @@ class ModalManager {
         this.showSaveSlots(sessions, false);
     }
 
-    showSaveSlots(slots, isSaveMode) {
-        const slotsList = slots || [];
+    showSaveSlots(slotsData, hasActiveGame) {
+        const slotsList = (slotsData && slotsData.slots) || slotsData || [];
+        const isActive = hasActiveGame !== false;
 
         let listHtml = '<div class="save-slots">';
         slotsList.forEach((slot) => {
             if (slot.empty) {
+                const clickAttr = isActive
+                    ? `data-action="save" data-slot="${slot.slot_number}"`
+                    : `data-action="none"`;
+                const slotClass = isActive ? 'save-slot-empty' : 'save-slot-empty save-slot-disabled';
+                const dateText = isActive ? '点击保存' : '无活跃案件';
                 listHtml += `
-                    <div class="save-slot save-slot-empty" data-slot="${slot.slot_number}" tabindex="0" role="button">
+                    <div class="save-slot ${slotClass}" ${clickAttr} tabindex="0" role="button">
                         <div class="save-slot-number">槽位 ${slot.slot_number}</div>
                         <div class="save-slot-info">
                             <div class="save-slot-name">空槽位</div>
-                            <div class="save-slot-date">点击保存</div>
+                            <div class="save-slot-date">${dateText}</div>
                         </div>
                     </div>
                 `;
@@ -94,76 +219,93 @@ class ModalManager {
                             <div class="save-slot-name">${this._escapeHtml(slot.name || '未知存档')}</div>
                             <div class="save-slot-date">${this._escapeHtml(slot.date || '未知日期')}</div>
                         </div>
-                        <button class="save-slot-delete-btn" data-delete-slot="${slot.slot_number}" title="删除此存档" aria-label="删除槽位 ${slot.slot_number}">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="3 6 5 6 21 6"/>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                            </svg>
-                        </button>
+                        <div class="save-slot-actions">
+                            <button class="save-slot-action-btn save-slot-action-overwrite" data-action="overwrite" data-slot="${slot.slot_number}" ${isActive ? '' : 'disabled'} title="覆盖存档">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                                <span>覆盖</span>
+                            </button>
+                            <button class="save-slot-action-btn save-slot-action-load" data-action="load" data-slot="${slot.slot_number}" data-session-id="${this._escapeHtml(slot.session_id || '')}" title="读取存档">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                <span>读取</span>
+                            </button>
+                            <button class="save-slot-action-btn save-slot-action-delete" data-action="delete" data-slot="${slot.slot_number}" title="清空槽位">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                                <span>清空</span>
+                            </button>
+                        </div>
                     </div>
                 `;
             }
         });
         listHtml += '</div>';
 
-        const title = isSaveMode ? '选择存档槽位' : '加载存档';
-        this._show(title, listHtml, [
-            { text: '取消', class: 'modal-btn-secondary', callback: null },
+        this._show('存档管理', listHtml, [
+            { text: '关闭', class: 'modal-btn-secondary', callback: null },
         ]);
 
         const slotEls = this.bodyEl.querySelectorAll('.save-slot');
         slotEls.forEach((el) => {
             const slotNumber = parseInt(el.getAttribute('data-slot'), 10);
-            const isOccupied = el.classList.contains('save-slot-occupied');
+            const action = el.getAttribute('data-action');
 
-            const deleteBtn = el.querySelector('.save-slot-delete-btn');
-            if (deleteBtn) {
-                deleteBtn.addEventListener('click', (e) => {
+            if (action === 'save' && isActive) {
+                const clickHandler = () => {
+                    if (window.bridge) window.bridge.saveToSlot(slotNumber);
+                };
+                el.addEventListener('click', clickHandler);
+                el.addEventListener('keypress', (e) => { if (e.key === 'Enter') clickHandler(); });
+            }
+
+            const overwriteBtn = el.querySelector('[data-action="overwrite"]');
+            if (overwriteBtn) {
+                overwriteBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const deleteSlot = parseInt(deleteBtn.getAttribute('data-delete-slot'), 10);
+                    if (overwriteBtn.disabled) return;
                     if (window.modalManager) {
                         window.modalManager.showConfirm(
-                            '确认删除',
-                            `确定要删除槽位 ${deleteSlot} 的存档吗？此操作不可撤销。`,
-                            () => {
-                                if (window.bridge) window.bridge.deleteSave(deleteSlot);
-                            }
+                            '覆盖存档',
+                            `确定要用当前进度覆盖槽位 ${slotNumber} 的存档吗？`,
+                            () => { if (window.bridge) window.bridge.saveToSlot(slotNumber); }
                         );
                     } else if (window.bridge) {
-                        window.bridge.deleteSave(deleteSlot);
+                        window.bridge.saveToSlot(slotNumber);
                     }
                 });
             }
 
-            const clickHandler = () => {
-                if (isSaveMode) {
-                    if (isOccupied) {
-                        if (window.modalManager) {
-                            window.modalManager.showConfirm(
-                                '覆盖存档',
-                                `槽位 ${slotNumber} 已有存档，确定要覆盖吗？`,
-                                () => {
-                                    if (window.bridge) window.bridge.saveToSlot(slotNumber);
-                                }
-                            );
-                        }
-                    } else {
-                        if (window.bridge) window.bridge.saveToSlot(slotNumber);
+            const loadBtn = el.querySelector('[data-action="load"]');
+            if (loadBtn) {
+                loadBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const sessionId = loadBtn.getAttribute('data-session-id');
+                    if (!sessionId) return;
+                    if (window.modalManager) {
+                        window.modalManager.showConfirm(
+                            '读取存档',
+                            '加载存档将丢失当前案件进度，请确认已保存。是否继续？',
+                            () => { if (window.bridge) window.bridge.selectSave(sessionId); }
+                        );
+                    } else if (window.bridge) {
+                        window.bridge.selectSave(sessionId);
                     }
-                } else {
-                    if (isOccupied) {
-                        const sessionId = el.getAttribute('data-session-id');
-                        if (sessionId && window.bridge) {
-                            window.bridge.selectSave(sessionId);
-                        }
-                    }
-                }
-            };
+                });
+            }
 
-            el.addEventListener('click', clickHandler);
-            el.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') clickHandler();
-            });
+            const deleteBtn = el.querySelector('[data-action="delete"]');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (window.modalManager) {
+                        window.modalManager.showConfirm(
+                            '清空槽位',
+                            `确定要清空槽位 ${slotNumber} 吗？此操作不可撤销。`,
+                            () => { if (window.bridge) window.bridge.deleteSave(slotNumber); }
+                        );
+                    } else if (window.bridge) {
+                        window.bridge.deleteSave(slotNumber);
+                    }
+                });
+            }
         });
     }
 
@@ -238,9 +380,11 @@ class ModalManager {
             </div>
         `;
 
-        this._show(title, bodyHtml, [
-            { text: '开始审讯', class: 'modal-btn-primary', callback: null },
-        ]);
+        const buttons = [];
+        if (window._gameInteractive !== false) {
+            buttons.push({ text: '进入审讯', class: 'modal-btn-primary modal-btn-full', callback: null });
+        }
+        this._show(title, bodyHtml, buttons);
     }
 
     showReviewReport(reviewData) {
@@ -477,6 +621,7 @@ class ModalManager {
     // ================================================================
 
     showGenerateCase() {
+        this._isGenerating = false;
         this._genSteps = [
             { emoji: '📐', text: '正在搭建虚拟世界框架...', status: 'pending' },
             { emoji: '🎬', text: '正在打造故事场景...', status: 'pending' },
@@ -506,11 +651,6 @@ class ModalManager {
                     <textarea class="form-textarea" id="generate-story" rows="6"
                               placeholder="请输入案件的背景故事..."></textarea>
                 </div>
-                <div class="form-group">
-                    <label class="form-label" for="generate-model">模型名称 <span class="form-label-hint">(可选，留空使用当前设置)</span></label>
-                    <input type="text" class="form-input" id="generate-model"
-                           placeholder="留空使用默认模型">
-                </div>
                 <div class="form-result" id="generate-result"></div>
             </div>
         `;
@@ -520,13 +660,15 @@ class ModalManager {
                 this._onGenerateCase(false);
                 return false;
             }},
-            { text: '取消', class: 'modal-btn-secondary', callback: null },
-        ]);
+            { text: '取消', class: 'modal-btn-secondary', callback: () => {
+                this._requestHide();
+                return false;
+            }},
+        ], 'modal-footer-center');
     }
 
     _onGenerateCase(safeMode) {
         const story = document.getElementById('generate-story')?.value?.trim() || '';
-        const model = document.getElementById('generate-model')?.value?.trim() || '';
 
         const resultEl = document.getElementById('generate-result');
         if (!story) {
@@ -536,6 +678,7 @@ class ModalManager {
             return;
         }
 
+        this._isGenerating = true;
         this._resetGenSteps();
         if (resultEl) {
             resultEl.innerHTML = this._renderGenSteps();
@@ -548,15 +691,13 @@ class ModalManager {
         }
 
         const storyEl = document.getElementById('generate-story');
-        const modelEl = document.getElementById('generate-model');
         if (storyEl) storyEl.disabled = true;
-        if (modelEl) modelEl.disabled = true;
 
         if (window.bridge) {
             if (safeMode) {
-                window.bridge.submitCaseGenerationSafe(story, model);
+                window.bridge.submitCaseGenerationSafe(story, '');
             } else {
-                window.bridge.submitCaseGeneration(story, model);
+                window.bridge.submitCaseGeneration(story, '');
             }
         }
     }
@@ -769,6 +910,11 @@ class ModalManager {
             this._genTypewriterTimer = null;
         }
         this._clearGenSubStepTimer();
+        this._isGenerating = false;
+
+        if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
+            this._hideGenCancelConfirm(false);
+        }
 
         let errorType = 'unknown';
         try {
@@ -853,6 +999,22 @@ class ModalManager {
             this._genTypewriterTimer = null;
         }
         this._clearGenSubStepTimer();
+        this._isGenerating = false;
+
+        if (this._genCancelConfirm && this._genCancelConfirm.style.display !== 'none') {
+            this._hideGenCancelConfirm(false);
+        }
+
+        const resultEl = document.getElementById('generate-result');
+        if (resultEl) {
+            const steps = this._genSteps || [];
+            const allDone = steps.every(s => s.status === 'done' || s.status === 'active');
+            if (!allDone && steps.length > 0) {
+                steps.forEach(s => { s.status = 'done'; });
+                resultEl.innerHTML = this._renderGenSteps();
+            }
+        }
+
         this.hide();
     }
 
@@ -861,18 +1023,26 @@ class ModalManager {
     // ================================================================
 
     hide() {
-        if (this.backdrop) this.backdrop.classList.remove('active');
+        if (this.backdrop) {
+            this.backdrop.classList.remove('active');
+            this.backdrop.style.pointerEvents = 'none';
+        }
         if (this.wrapper) this.wrapper.classList.remove('active');
         if (this.modal) this.modal.classList.remove('active');
+        this._isGenerating = false;
         this._confirmCallback = null;
         document.body.classList.remove('modal-open');
         if (window.timerManager) window.timerManager.flush();
     }
 
-    _show(title, bodyHtml, buttons) {
+    _show(title, bodyHtml, buttons, footerClass) {
         if (!this.modal || !this.backdrop) {
             console.error('[ModalManager] Modal elements not found');
             return;
+        }
+
+        if (this.backdrop) {
+            this.backdrop.style.pointerEvents = '';
         }
 
         if (this.titleEl) {
@@ -885,6 +1055,10 @@ class ModalManager {
 
         if (this.footerEl) {
             this.footerEl.innerHTML = '';
+            this.footerEl.className = 'modal-footer';
+            if (footerClass) {
+                this.footerEl.classList.add(footerClass);
+            }
             buttons.forEach((btn) => {
                 const buttonEl = document.createElement('button');
                 buttonEl.className = `modal-btn ${btn.class || 'modal-btn-secondary'}`;

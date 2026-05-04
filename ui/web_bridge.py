@@ -56,7 +56,7 @@ class WebBridge(QObject):
 
     # 存档列表
     show_save_list = Signal(list)  # sessions
-    show_save_slots = Signal(list)  # slot data for save/load UI
+    show_save_slots = Signal(dict)  # slot data for save/load UI
 
     # 游戏交互控制
     set_game_interactive = Signal(bool)  # 控制所有游戏操作

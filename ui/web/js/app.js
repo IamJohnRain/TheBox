@@ -191,10 +191,6 @@
                 chatManager.switchSuspect(state.suspects[idx].name);
             }
 
-            // 设置交互状态
-            const selector = document.getElementById('suspect-selector');
-            if (selector) selector.disabled = !interactive;
-
             const btnPressure = document.getElementById('btn-pressure');
             const btnEmpathy = document.getElementById('btn-empathy');
             if (btnPressure) btnPressure.disabled = !interactive;
@@ -272,13 +268,13 @@
 
         bridge.on('showSaveList', (data) => {
             if (!data) return;
-            modalManager.showSaveSlots(data.sessions, false);
+            modalManager.showSaveSlots(data.sessions);
         });
 
         bridge.on('showSaveSlots', (data) => {
             if (!data) return;
-            const isSaveMode = data.slots && data.slots._saveMode === true;
-            modalManager.showSaveSlots(data.slots, isSaveMode);
+            const hasActiveGame = data.slots && data.slots._hasActiveGame === true;
+            modalManager.showSaveSlots(data.slots, hasActiveGame);
         });
 
         bridge.on('showEndingDialog', (data) => {
@@ -331,21 +327,20 @@
         bridge.on('gameInteractive', (data) => {
             if (!data) return;
             const enabled = data.enabled;
+            window._gameInteractive = enabled;
 
-            // 聊天输入框
             chatManager.setInputEnabled(enabled);
 
-            // 嫌疑人下拉框
             const selector = document.getElementById('suspect-selector');
-            if (selector) selector.disabled = !enabled;
+            if (selector && suspectManager.suspects.length > 0) {
+                selector.disabled = !enabled;
+            }
 
-            // 施压/共情按钮
             const btnPressure = document.getElementById('btn-pressure');
             const btnEmpathy = document.getElementById('btn-empathy');
             if (btnPressure) btnPressure.disabled = !enabled;
             if (btnEmpathy) btnEmpathy.disabled = !enabled;
 
-            // 证据卡片
             document.querySelectorAll('.evidence-card').forEach((card) => {
                 card.style.pointerEvents = enabled ? '' : 'none';
                 card.style.opacity = enabled ? '' : '0.5';
@@ -384,10 +379,6 @@
 
         bindButton('btn-save', () => {
             if (window.bridge) window.bridge.requestSave();
-        });
-
-        bindButton('btn-load', () => {
-            if (window.bridge) window.bridge.requestLoad();
         });
 
         bindButton('btn-settings', () => {
@@ -457,7 +448,7 @@
         });
 
         keyboardManager.register('ctrl+l', () => {
-            if (window.bridge) window.bridge.requestLoad();
+            if (window.bridge) window.bridge.requestSave();
         });
 
         keyboardManager.register('escape', () => {
