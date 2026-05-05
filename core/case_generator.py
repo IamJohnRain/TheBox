@@ -1,7 +1,9 @@
 import json
 import logging
+import os
 import re
 import uuid
+from datetime import datetime
 from typing import Callable, Dict, Optional
 
 import jsonschema
@@ -177,6 +179,18 @@ def _is_truncation_error(error: json.JSONDecodeError) -> bool:
     return any(p in msg for p in _TRUNCATION_ERROR_PATTERNS)
 
 
+def _save_failed_json(raw_text: str, error_msg: str) -> None:
+    """将解析失败的 JSON 原文保存到 tests/failured_case_json/ 目录。"""
+    save_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "failured_case_json")
+    os.makedirs(save_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"failed_{timestamp}.json"
+    filepath = os.path.join(save_dir, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(raw_text)
+    logger.info(f"已保存失败 JSON 到 {filepath} (错误: {error_msg})")
+
+
 def _try_repair_truncated_json(
     client: LLMClient,
     original_text: str,
@@ -239,6 +253,7 @@ def _try_repair_truncated_json(
         return case_dict
 
     except json.JSONDecodeError as e:
+        _save_failed_json(merged, str(e))
         logger.warning(f"续写后仍无法解析 JSON: {e}")
         return None
     except Exception as e:
@@ -322,7 +337,7 @@ def generate_case(
             logger.warning(f"第 {attempt + 1} 次：安全提示词也触发内容过滤: {e}")
         except json.JSONDecodeError as e:
             last_error = e
-            # 记录原始响应片段，便于排查截断位置
+            _save_failed_json(text, str(e))
             head = text[:200] if len(text) > 200 else text
             tail = text[-200:] if len(text) > 200 else ""
             logger.warning(
