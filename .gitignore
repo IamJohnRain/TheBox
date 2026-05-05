@@ -21,3 +21,4 @@ coverage.xml
 
 apikey.yml
 todo.md
+tests/failured_case_json/
