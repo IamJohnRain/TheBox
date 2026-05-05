@@ -47,10 +47,10 @@
 
 | 段位 | 范围 | 供词增速 | 时间动态 | LLM 行为指令 |
 |------|------|---------|---------|-------------|
-| 冷静 | 0-30 | 0.02/轮 | 每秒 -0.5（自然衰减） | 冷静从容，回答滴水不漏，主动质疑指控 |
-| 紧张 | 30-60 | 0.05/轮 | 稳定（不增不减） | 有些紧张，偶有多余发言，细微前后不一致 |
-| 慌乱 | 60-80 | 0.10/轮 | 每秒 +0.3（自然增长） | 慌乱矛盾，可能说漏嘴，辩解逻辑混乱 |
-| 崩溃边缘 | 80-100 | 0.15/轮 | 每秒 +0.3（自然增长） | 接近崩溃，语无伦次，可能不自觉泄露 |
+| 冷静 | 0-30 | 0.02/轮 | 每轮 -1（自然衰减，受floor=15保护） | 冷静从容，回答滴水不漏，主动质疑指控 |
+| 紧张 | 30-70 | 0.05/轮 | 稳定（不增不减） | 有些紧张，偶有多余发言，细微前后不一致 |
+| 慌乱 | 70-80 | 0.10/轮 | 每轮 +1（自然增长） | 慌乱矛盾，可能说漏嘴，辩解逻辑混乱 |
+| 崩溃边缘 | 80-100 | 0.15/轮 | 每轮 +1（自然增长） | 接近崩溃，语无伦次，可能不自觉泄露 |
 
 ### 动态变化触发器
 
@@ -58,14 +58,14 @@
 |------|------|------|
 | 出示正确证据 | +基础增量×fear系数×defiance系数 | evidence.related_suspect == suspect.name |
 | 证据链 | +10 额外 | chain_with 关联已出示证据 |
-| 施压（action=pressure） | +15×fear系数×defiance系数 | 使用施压操作 |
+| 施压（action=pressure） | +15×soft_factor | 使用施压操作（每人限2次，第二次效果减半） |
 | 沉默施压工具 | +15 | 工具使用 |
 | 威胁工具 | +20 | 工具使用 |
 | 多人对质工具 | +20（当前嫌疑人） | 工具使用 |
 | 反驳成功 | 本次增量归零 | rebuttal_believable=True |
-| 共情（action=empathy） | -5×empathy系数 | 共情操作（仅高empathy时微降） |
-| 时间动态（低段） | -0.5/秒 | pressure < 40 |
-| 时间动态（高段） | +0.3/秒 | pressure >= 60 |
+| 共情（action=empathy） | -5×empathy系数 | 共情操作（每人限2次，第二次效果减半） |
+| 时间动态（低段） | -1/轮 | pressure < 30 |
+| 时间动态（高段） | +1/轮 | pressure >= 70 |
 | 反扑：挑衅 | -2/轮 | fear < 15 时触发 |
 | 反扑：得意回应 | 供词进度 -0.05 | 反驳成功时 |
 
@@ -75,7 +75,7 @@
 |------|------|------|
 | pressure→defiance | pressure > 60 | defiance 每轮 -1 |
 | pressure→deception_skill | pressure > 70 | deception_skill 每轮 -2 |
-| pressure→主动开口 | pressure > 70 | 每5轮概率检查（pressure/200） |
+| pressure→主动开口 | pressure > 70 | 每5轮概率检查（pressure/300，即23%-33%） |
 | pressure→反驳 | pressure > 80 | 反驳几乎不可能成功（程序化兜底） |
 | pressure→loyalty | pressure > loyalty | 多人对质时可能背叛 |
 
@@ -169,7 +169,11 @@ fear_factor = fear / 50
 raw_delta = base × (1 + strength × 0.1) + chain_bonus
 fear_factor = suspect.fear / 50
 defiance_factor = 1.0 / (1.0 + suspect.defiance × 0.01)
-pressure_delta = int(raw_delta × fear_factor × defiance_factor)
+raw_factor = fear_factor × defiance_factor
+# 软上限：将综合系数限制在 0.3 - 1.5 之间，防止极端性格差距过大
+soft_factor = max(0.3, min(1.5, raw_factor))
+pressure_delta = int(raw_delta × soft_factor)
+# AP消耗：施压=2AP, 出示证据=2AP, 对话=1AP
 ```
 
 ### fear 分段行为
@@ -185,7 +189,7 @@ pressure_delta = int(raw_delta × fear_factor × defiance_factor)
 
 | 触发 | 变化 | 说明 |
 |------|------|------|
-| 出示正确证据 | +5 | 证据让嫌疑人害怕 |
+| 出示正确证据 | +8 | 证据让嫌疑人害怕（与错误-10形成正向激励） |
 | 出示错误证据 | -10 | 玩家暴露了判断失误 |
 | 施压成功（对真凶） | +5 | 有效施压增加恐惧 |
 | 施压失败（对无辜者） | -5 | 嫌疑人知道你搞错了 |
@@ -193,7 +197,7 @@ pressure_delta = int(raw_delta × fear_factor × defiance_factor)
 | 对真凶共情（错误共情） | +5 | 真凶觉得你在套话，反而警惕 |
 | 反驳成功 | -5 | 得逞→恐惧下降 |
 | 反扑：反击质问 | +10 | 连续2次施压失败触发 |
-| 时间动态 | -1/5秒 | 自然冷却，不操作时恐惧缓慢回落 |
+| 时间动态 | -1/轮 | 每轮自然冷却 |
 | 被同伴出卖 | +10 | 忠诚崩塌后恐惧上升 |
 
 ### 对其他维度的影响
@@ -708,8 +712,8 @@ DIMENSION_PER_TURN_EFFECTS = {
     "fear_lt_15":     {"defiance": +2},  # 挑衅反扑
 }
 
-# fear 自然冷却
-FEAR_NATURAL_DECAY_RATE = -1  # 每5秒 -1
+# fear 每轮自然冷却
+FEAR_PER_TURN_DECAY = -1  # 每轮 -1
 
 # 反扑触发条件
 PROACTIVE_TRIGGERS = {

@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 SCORING_DIMENSIONS = {
     # ── 结果维度 ──
     "confession_depth": {"weight": 0.20, "desc": "供词深度：最终供词层级"},
-    "time_efficiency": {"weight": 0.10, "desc": "时间效率：剩余时间占比"},
+    "ap_efficiency": {"weight": 0.10, "desc": "行动效率：剩余AP占比"},
     "evidence_usage": {"weight": 0.10, "desc": "证据利用：正确出示的相关证据占比"},
     # ── 行为过程维度（v1.2 新增） ──
     "pressure_accuracy": {"weight": 0.15, "desc": "施压精准度：对真凶施压次数 / 总施压次数"},
@@ -88,7 +88,7 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
             - related_evidence_count: 与当前嫌疑人相关的证据总数
             - used_tools: 已使用工具列表
             - confession_level: 最终供词层级
-            - time_left: 剩余时间
+            - ap_remaining: 剩余行动点数
             - total_time: 总时间
             - suspect_name: 被审讯嫌疑人名
 
@@ -99,16 +99,18 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── 规则计算的维度 ──
 
-    # 时间效率
-    time_left = session_data.get("time_left", 0)
-    total_time = session_data.get("total_time", 1)
-    scores["time_efficiency"] = min(100, int((time_left / max(total_time, 1)) * 100))
+    # 行动效率（剩余AP/总AP）
+    ap_remaining = session_data.get("ap_remaining", 0)
+    total_ap = session_data.get("total_ap", 1)
+    scores["ap_efficiency"] = min(100, int((ap_remaining / max(total_ap, 1)) * 100))
 
-    # 证据利用（修正v1.1：基于相关证据而非总证据）
-    presented = len(session_data.get("presented_evidence", []))
+    # 证据利用（修正v1.2：基于正确出示的相关证据 / 可出示上限）
+    correct_evidence = session_data.get("correct_evidence_count", 0)
     related_count = session_data.get("related_evidence_count", 0)
+    evidence_uses = session_data.get("evidence_uses", DEFAULT_EVIDENCE_USES)
     if related_count > 0:
-        scores["evidence_usage"] = min(100, int((presented / related_count) * 100))
+        max_possible = min(evidence_uses, related_count)
+        scores["evidence_usage"] = min(100, int((correct_evidence / max_possible) * 100))
     else:
         scores["evidence_usage"] = 0
 
@@ -135,16 +137,19 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
     else:
         scores["evidence_accuracy"] = 50
 
-    # 错误惩罚：根据 mistake_log 计算
+    # 错误惩罚：根据 mistake_log 计算（递减惩罚，避免线性过于严厉）
     mistake_log = session_data.get("mistake_log", [])
     mistake_count = len(mistake_log)
     innocent_breakdown = any(m.get("type") == "innocent_breakdown" for m in mistake_log)
     proactive_triggered = session_data.get("proactive_triggered_count", 0)
-    mistake_score = max(0, 100 - mistake_count * 15)
+    # 递减权重：首错-15，二错-10，三错-8，四错-5，五错及以后-3
+    penalty_weights = [15, 10, 8, 5, 3]
+    total_penalty = sum(penalty_weights[min(i, len(penalty_weights)-1)] for i in range(mistake_count))
+    mistake_score = max(50, 100 - total_penalty)  # 下限50分，保留基础分
     if innocent_breakdown:
-        mistake_score = max(0, mistake_score - 30)  # 无辜崩溃额外扣30
+        mistake_score = max(50, mistake_score - 30)  # 无辜崩溃额外扣30
     if proactive_triggered > 0:
-        mistake_score = max(0, mistake_score - proactive_triggered * 5)  # 反扑触发扣5/次
+        mistake_score = max(50, mistake_score - proactive_triggered * 5)  # 反扑触发扣5/次
     scores["mistake_penalty"] = mistake_score
 
     # ── LLM 判断的维度 ──
@@ -239,7 +244,7 @@ def _llm_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
 
 ```python
 def _handle_ending(self, state_event):
-    self._countdown_timer.stop()
+    self._countdown_timer.stop()  # 注意：AP系统下此定时器可能已不存在
     self.bridge.set_game_interactive.emit(False)
 
     # 计算评分
@@ -273,8 +278,8 @@ def _handle_ending(self, state_event):
         "related_evidence_count": related_evidence_count,
         "used_tools": self.engine.used_tools,
         "confession_level": suspect.confession_level,
-        "time_left": self.engine.time_left,
-        "total_time": self.engine.case.get("interrogation_time_limit_sec", 300),
+        "ap_remaining": self.engine.action_points_remaining,
+        "total_ap": self.engine.total_action_points,
         "suspect_name": suspect.name,
         "mistake_log": self.engine.mistake_log,
         "correct_evidence_count": correct_evidence_count,
@@ -299,7 +304,7 @@ def _handle_ending(self, state_event):
         <div class="dim-group">
             <h4>结果评估</h4>
             <div class="dim-item" data-dim="confession_depth">供词深度</div>
-            <div class="dim-item" data-dim="time_efficiency">时间效率</div>
+            <div class="dim-item" data-dim="ap_efficiency">行动效率</div>
             <div class="dim-item" data-dim="evidence_usage">证据利用</div>
         </div>
         <div class="dim-group">
@@ -373,10 +378,10 @@ def generate_case(background: str, difficulty: str = "easy", max_retries: int = 
 
 ```python
 difficulty_constraints = {
-    "easy": "生成2个嫌疑人，3-4个证据，3个以上forbidden_to_reveal关键词，审讯时限360秒。",
-    "normal": "生成2-3个嫌疑人，3-4个证据，2个forbidden_to_reveal关键词，审讯时限300秒。",
-    "hard": "生成3-4个嫌疑人，4-5个证据，1-2个forbidden_to_reveal关键词，审讯时限240秒。嫌疑人的反驳能力更强。",
-    "nightmare": "生成4个以上嫌疑人，5-6个证据，仅1个forbidden_to_reveal关键词，审讯时限180秒。嫌疑人非常善于隐瞒。",
+    "easy": "生成2个嫌疑人，3-4个证据，3个以上forbidden_to_reveal关键词，行动点数25。",
+    "normal": "生成2-3个嫌疑人，3-4个证据，2个forbidden_to_reveal关键词，行动点数20。",
+    "hard": "生成3-4个嫌疑人，4-5个证据，1-2个forbidden_to_reveal关键词，行动点数18。嫌疑人的反驳能力更强。",
+    "nightmare": "生成4个以上嫌疑人，5-6个证据，仅1个forbidden_to_reveal关键词，行动点数15。嫌疑人非常善于隐瞒。",
 }
 ```
 
@@ -388,21 +393,22 @@ difficulty_constraints = {
 # core/game_config.py — Phase 4 添加
 
 DIFFICULTY_PRESETS: Dict[str, Dict[str, Any]] = {
-    "easy":      {"suspects": 2, "time": 360, "evidence_uses": 4, "keywords": 3, "unlock_level": 1},
-    "normal":    {"suspects": "2-3", "time": 300, "evidence_uses": 3, "keywords": 2, "unlock_level": 5},
-    "hard":      {"suspects": "3-4", "time": 240, "evidence_uses": 3, "keywords": 2, "unlock_level": 10},
-    "nightmare": {"suspects": "4+", "time": 180, "evidence_uses": 2, "keywords": 1, "unlock_level": 15},
+    "easy":      {"suspects": 2, "total_ap": 25, "evidence_uses": 4, "keywords": 3, "unlock_level": 1},
+    "normal":    {"suspects": "2-3", "total_ap": 20, "evidence_uses": 4, "keywords": 2, "unlock_level": 5},
+    "hard":      {"suspects": "3-4", "total_ap": 18, "evidence_uses": 4, "keywords": 2, "unlock_level": 10},
+    "nightmare": {"suspects": "4+", "total_ap": 15, "evidence_uses": 3, "keywords": 1, "unlock_level": 15},
 }
 ```
 
 ### 解锁节奏说明
 
 - **Lv.1-4**：简单难度，熟悉基础机制（约 5-10 局，30-60分钟）
-- **Lv.5-9**：普通难度，引入反驳机制（约 10-15 局，累计 1.5-2小时）
-- **Lv.10-14**：困难难度，完整策略体验（约 15-20 局，累计 3-4小时）
-- **Lv.15+**：噩梦难度，挑战极限
+- **Lv.5-9**：普通难度，引入反驳机制（约 10-15 局，累计 1.5-2.5小时）
+- **Lv.10-14**：困难难度，完整策略体验（约 15-25 局，累计 3-5小时）
+- **Lv.15+**：噩梦难度，挑战极限（约 20-30 局，累计 5-8小时）
 
-> 此节奏基于每局约5分钟、经验获取约30-50点的估算。实际节奏需根据试玩数据调整。
+> 此节奏基于每局约5分钟、经验获取约40-65点的估算。实际节奏需根据试玩数据调整。
+> 经验曲线验证：Lv.10约需1700exp（约25-40局，2-3小时）；Lv.20约需7100exp（约110-180局，9-15小时）。
 
 ---
 
@@ -442,7 +448,7 @@ function updateDifficultyOptions(playerLevel) {
 
 | 测试 | 说明 |
 |------|------|
-| 规则维度计算 | 时间效率、证据利用（相关证据）、供词深度的分数正确 |
+| 规则维度计算 | 行动效率、证据利用（相关证据）、供词深度的分数正确 |
 | 证据利用基于相关证据 | 验证出示无关证据不计入分子 |
 | 施压精准度 | 对真凶施压 vs 对无辜施压，正确计算比例 |
 | 证据精准度 | 正确证据 vs 错误证据比例 |

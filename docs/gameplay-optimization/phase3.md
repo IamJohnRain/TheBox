@@ -42,7 +42,7 @@ class Tool(ABC):
     display_name: str = ""   # 显示名称（如 "心理侧写"）
     max_uses: int = 1
     unlock_level: int = 1
-    cost_time: int = 0       # 消耗时间（秒）
+    cost_ap: int = 0        # 消耗行动点数
 
     @abstractmethod
     def execute(self, engine, suspect, content: str) -> List[UIEvent]:
@@ -142,10 +142,14 @@ def _use_tool(self, tool_name: str, content: str) -> List[UIEvent]:
     self.available_tools[tool_name] -= 1
     self.used_tools.append(tool_name)
 
-    # 扣减时间
+    # 扣减行动点数
     tool = get_tool(tool_name)
-    if tool.cost_time > 0:
-        self.time_left = max(0, self.time_left - tool.cost_time)
+    if tool.cost_ap > 0:
+        if self.action_points_remaining < tool.cost_ap:
+            events.append(self._system_message(f"行动点数不足，{tool.display_name}需要{tool.cost_ap}AP"))
+            self.available_tools[tool_name] += 1  # 回退次数
+            return events
+        self.action_points_remaining = max(0, self.action_points_remaining - tool.cost_ap)
 
     # 执行工具逻辑（策略模式）
     suspect = self.suspects[self.current_suspect_index]
@@ -191,7 +195,7 @@ class PsychProfileBasicTool(Tool):
     display_name = "心理侧写（初级）"
     max_uses = 1
     unlock_level = 2
-    cost_time = 0
+    cost_ap = 0
 
     def execute(self, engine, suspect, content: str):
         personality = suspect._suspect_data.get("personality", "未知")
@@ -217,7 +221,7 @@ class PsychProfileAdvancedTool(Tool):
     display_name = "心理侧写（高级）"
     max_uses = 1
     unlock_level = 10
-    cost_time = 0
+    cost_ap = 0
 
     def execute(self, engine, suspect, content: str):
         personality = suspect._suspect_data.get("personality", "未知")
@@ -246,7 +250,7 @@ class PsychProfileMasterTool(Tool):
     display_name = "心理侧写（大师）"
     max_uses = 1
     unlock_level = 15
-    cost_time = 0
+    cost_ap = 0
 
     def execute(self, engine, suspect, content: str):
         personality = suspect._suspect_data.get("personality", "未知")
@@ -285,7 +289,7 @@ class SilentPressureTool(Tool):
     display_name = "沉默施压"
     max_uses = 2
     unlock_level = 10
-    cost_time = 5
+    cost_ap = 1
 
     def execute(self, engine, suspect, content: str):
         suspect.pressure = max(0, min(100, suspect.pressure + 15))
@@ -312,7 +316,7 @@ class ThreatTool(Tool):
     display_name = "威胁"
     max_uses = 1
     unlock_level = 14
-    cost_time = 0
+    cost_ap = 0
 
     def execute(self, engine, suspect, content: str):
         """威胁，压力+20。嫌疑人是否沉默由压力值决定（非随机）。"""
@@ -345,7 +349,7 @@ class PsychCollapseTool(Tool):
     display_name = "心理崩溃"
     max_uses = 1
     unlock_level = 18
-    cost_time = 60
+    cost_ap = 5
 
     def execute(self, engine, suspect, content: str):
         """供词直接+1级，但时间-60秒。
@@ -378,7 +382,7 @@ class PsychCollapseTool(Tool):
             NewMessageEvent(
                 type="new_message",
                 role="system",
-                content=f"【心理崩溃】{suspect.name} 的供词层级提升至 {suspect.confession_level}！（时间 -60秒）",
+                content=f"【心理崩溃】{suspect.name} 的供词层级提升至 {suspect.confession_level}！（行动点 -5）",
                 suspect_name=None,
             ),
         ]
@@ -413,7 +417,7 @@ class LieDetectorTool(Tool):
     display_name = "测谎仪"
     max_uses = 2
     unlock_level = 4
-    cost_time = 0
+    cost_ap = 0
 
     def execute(self, engine, suspect, content: str):
         """让 LLM 判断嫌疑人上一句话的真假。
@@ -473,7 +477,7 @@ class FakeEvidenceTool(Tool):
     display_name = "伪造证据"
     max_uses = 1
     unlock_level = 6
-    cost_time = 10
+    cost_ap = 2
 
     def execute(self, engine, suspect, content: str):
         """用伪造的证据试探嫌疑人反应。"""
@@ -501,7 +505,7 @@ class MemoryRecallTool(Tool):
     display_name = "记忆回溯"
     max_uses = 1
     unlock_level = 8
-    cost_time = 0
+    cost_ap = 0
 
     def execute(self, engine, suspect, content: str):
         """总结嫌疑人对话中的矛盾点。"""
@@ -553,7 +557,7 @@ class DualInterrogationTool(Tool):
     display_name = "多人对质"
     max_uses = 1
     unlock_level = 15
-    cost_time = 30
+    cost_ap = 3
 
     def execute(self, engine, suspect, content: str):
         """两名嫌疑人同时审讯，压力效果翻倍。
@@ -592,16 +596,16 @@ class DualInterrogationTool(Tool):
 # core/game_config.py — Phase 3a 添加
 
 TOOL_DEFINITIONS = {
-    "psych_profile_basic":    {"display_name": "心理侧写（初级）", "max_uses": 1, "unlock_level": 2,  "cost_time": 0},
-    "psych_profile_advanced": {"display_name": "心理侧写（高级）", "max_uses": 1, "unlock_level": 10, "cost_time": 0},
-    "psych_profile_master":   {"display_name": "心理侧写（大师）", "max_uses": 1, "unlock_level": 15, "cost_time": 0},
-    "lie_detector":           {"display_name": "测谎仪",     "max_uses": 2, "unlock_level": 4,  "cost_time": 0},
-    "fake_evidence":          {"display_name": "伪造证据",   "max_uses": 1, "unlock_level": 6,  "cost_time": 10},
-    "memory_recall":          {"display_name": "记忆回溯",   "max_uses": 1, "unlock_level": 8,  "cost_time": 0},
-    "silent_pressure":        {"display_name": "沉默施压",   "max_uses": 2, "unlock_level": 10, "cost_time": 5},
-    "dual_interrogation":     {"display_name": "多人对质",   "max_uses": 1, "unlock_level": 15, "cost_time": 30},
-    "threat":                 {"display_name": "威胁",       "max_uses": 1, "unlock_level": 14, "cost_time": 0},
-    "psych_collapse":         {"display_name": "心理崩溃",   "max_uses": 1, "unlock_level": 18, "cost_time": 60},
+    "psych_profile_basic":    {"display_name": "心理侧写（初级）", "max_uses": 1, "unlock_level": 2,  "cost_ap": 0},
+    "psych_profile_advanced": {"display_name": "心理侧写（高级）", "max_uses": 1, "unlock_level": 10, "cost_ap": 0},
+    "psych_profile_master":   {"display_name": "心理侧写（大师）", "max_uses": 1, "unlock_level": 15, "cost_ap": 0},
+    "lie_detector":           {"display_name": "测谎仪",     "max_uses": 2, "unlock_level": 4,  "cost_ap": 0},
+    "fake_evidence":          {"display_name": "伪造证据",   "max_uses": 1, "unlock_level": 6,  "cost_ap": 2},
+    "memory_recall":          {"display_name": "记忆回溯",   "max_uses": 1, "unlock_level": 8,  "cost_ap": 0},
+    "silent_pressure":        {"display_name": "沉默施压",   "max_uses": 2, "unlock_level": 10, "cost_ap": 1},
+    "dual_interrogation":     {"display_name": "多人对质",   "max_uses": 1, "unlock_level": 15, "cost_ap": 3},
+    "threat":                 {"display_name": "威胁",       "max_uses": 1, "unlock_level": 14, "cost_ap": 0},
+    "psych_collapse":         {"display_name": "心理崩溃",   "max_uses": 1, "unlock_level": 18, "cost_ap": 5},
 }
 ```
 
@@ -763,7 +767,7 @@ class PlayerProfile:
 
     def get_evidence_uses(self) -> int:
         """获取当前等级的证据使用次数。"""
-        return LEVEL_UNLOCKS.get(self.level, {}).get("evidence_uses", 3)
+        return LEVEL_UNLOCKS.get(self.level, {}).get("evidence_uses", 4)
 
     def get_available_tools(self) -> list:
         """获取当前等级可用的工具列表。"""
@@ -875,25 +879,25 @@ EXPERIENCE_CURVE: List[int] = [
 ]
 
 LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
-    1:  {"tools": [], "evidence_uses": 3, "desc": "基础审讯"},
-    2:  {"tools": ["psych_profile_basic"], "evidence_uses": 3, "desc": "初级心理侧写：可见 personality + fear"},
-    3:  {"tools": [], "evidence_uses": 4, "desc": "证据次数+1"},
+    1:  {"tools": [], "evidence_uses": 4, "desc": "基础审讯"},
+    2:  {"tools": ["psych_profile_basic"], "evidence_uses": 4, "desc": "初级心理侧写：可见 personality + fear"},
+    3:  {"tools": [], "evidence_uses": 4, "desc": "证据次数保持"},
     4:  {"tools": ["lie_detector"], "evidence_uses": 4, "desc": "测谎仪"},
-    5:  {"tools": [], "evidence_uses": 4, "desc": "普通难度解锁"},
-    6:  {"tools": ["fake_evidence"], "evidence_uses": 4, "desc": "伪造证据"},
+    5:  {"tools": [], "evidence_uses": 5, "desc": "普通难度解锁；证据次数+1"},
+    6:  {"tools": ["fake_evidence"], "evidence_uses": 5, "desc": "伪造证据"},
     7:  {"tools": [], "evidence_uses": 5, "desc": "施压/共情效果+50%"},
     8:  {"tools": ["memory_recall"], "evidence_uses": 5, "desc": "记忆回溯"},
-    9:  {"tools": [], "evidence_uses": 5, "desc": "证据次数+1"},
-    10: {"tools": ["psych_profile_advanced", "silent_pressure"], "evidence_uses": 5, "desc": "高级侧写：可见+defiance/empathy；沉默施压；困难难度解锁"},
-    11: {"tools": [], "evidence_uses": 5, "desc": "审讯时间+30秒"},
+    9:  {"tools": [], "evidence_uses": 5, "desc": "证据次数保持"},
+    10: {"tools": ["psych_profile_advanced", "silent_pressure"], "evidence_uses": 6, "desc": "高级侧写：可见+defiance/empathy；沉默施压；困难难度解锁；证据次数+1"},
+    11: {"tools": [], "evidence_uses": 6, "desc": "行动点数+3"},
     12: {"tools": [], "evidence_uses": 6, "desc": "初始压力降低10"},
-    13: {"tools": [], "evidence_uses": 6, "desc": "证据次数+1"},
-    14: {"tools": ["threat"], "evidence_uses": 6, "desc": "威胁"},
-    15: {"tools": ["psych_profile_master", "dual_interrogation"], "evidence_uses": 6, "desc": "大师侧写：可见全部维度；多人对质；噩梦难度解锁"},
-    16: {"tools": [], "evidence_uses": 7, "desc": "审讯时间+30秒"},
-    17: {"tools": [], "evidence_uses": 7, "desc": "证据次数+1"},
-    18: {"tools": ["psych_collapse"], "evidence_uses": 7, "desc": "心理崩溃"},
-    19: {"tools": [], "evidence_uses": 7, "desc": "初始压力再降10"},
+    13: {"tools": [], "evidence_uses": 6, "desc": "证据次数保持"},
+    14: {"tools": ["threat"], "evidence_uses": 7, "desc": "威胁；证据次数+1"},
+    15: {"tools": ["psych_profile_master", "dual_interrogation"], "evidence_uses": 7, "desc": "大师侧写：可见全部维度；多人对质；噩梦难度解锁"},
+    16: {"tools": [], "evidence_uses": 7, "desc": "行动点数+3"},
+    17: {"tools": [], "evidence_uses": 7, "desc": "证据次数保持"},
+    18: {"tools": ["psych_collapse"], "evidence_uses": 8, "desc": "心理崩溃；证据次数+1"},
+    19: {"tools": [], "evidence_uses": 8, "desc": "初始压力再降10"},
     20: {"tools": [], "evidence_uses": 8, "desc": "审讯大师：所有工具次数+1"},
 }
 ```

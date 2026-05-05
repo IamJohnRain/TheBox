@@ -295,7 +295,7 @@ def get_narrative(self, result: ChapterResult) -> str:
         "truth": "...",
         "suspects": [...],
         "evidences": [...],
-        "interrogation_time_limit_sec": 300
+        "total_action_points": 20
       },
       "merge_to": null,
       "branch": {
@@ -414,7 +414,7 @@ class ChapterResult(TypedDict):
     result: Literal["win", "partial", "fail"]
     confession_level: int       # 来自 Phase 1 供词系统
     evidence_count: int         # 已出示证据数
-    time_remaining_pct: float   # 剩余时间百分比
+    ap_remaining_pct: float     # 剩余行动点数百分比
     suspect_name: str
     verdict_reason: str
 ```
@@ -425,7 +425,7 @@ class ChapterResult(TypedDict):
 def evaluate_chapter(engine: InterrogationEngine) -> ChapterResult:
     """基于引擎状态评估审讯结果。"""
     suspect = engine.suspects[engine.current_suspect_index]
-    total_time = engine.case.get("interrogation_time_limit_sec", 300)
+    total_ap = engine.total_action_points
 
     # 三级判定
     if engine.state == "breakdown" or suspect.confession_level >= 4:
@@ -441,7 +441,7 @@ def evaluate_chapter(engine: InterrogationEngine) -> ChapterResult:
         result=result,
         confession_level=suspect.confession_level,
         evidence_count=len(engine.presented_evidence_ids),
-        time_remaining_pct=round(engine.time_left / max(total_time, 1), 2),
+        ap_remaining_pct=round(engine.action_points_remaining / max(total_ap, 1), 2),
         suspect_name=suspect.name,
         verdict_reason=f"供词层级{suspect.confession_level}，状态{engine.state}",
     )
@@ -678,7 +678,7 @@ class PlayerProfile:
 | 来源 | 经验值 | 说明 |
 |------|--------|------|
 | 剧情模式每章完成 | 基础 20 exp × 评级系数 | win=1.5x, partial=1.0x, fail=0.5x |
-| 自定义模式每局完成 | 沿用 Phase 4 评分系统 | 供词深度 + 时间效率 + 证据利用 + LLM评分 |
+| 自定义模式每局完成 | 沿用 Phase 4 评分系统 | 供词深度 + 行动效率 + 证据利用 + LLM评分 |
 
 ### 8.3 存档扩展
 

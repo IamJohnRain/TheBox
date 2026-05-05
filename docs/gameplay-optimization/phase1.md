@@ -58,10 +58,13 @@ CONFESSION_LEVELS = {
 # requires_evidence: 是否需要出示过关联证据
 CONFESSION_THRESHOLDS: Dict[int, Dict[str, Any]] = {
     0: {"pressure": 40, "min_turns": 3, "requires_evidence": False},
-    1: {"pressure": 60, "min_turns": 5, "requires_evidence": True},
-    2: {"pressure": 75, "min_turns": 7, "requires_evidence": True},
-    3: {"pressure": 90, "min_turns": 10, "requires_evidence": True},
+    1: {"pressure": 55, "min_turns": 5, "requires_evidence": True},
+    2: {"pressure": 70, "min_turns": 7, "requires_evidence": True},
+    3: {"pressure": 85, "min_turns": 10, "requires_evidence": True},
 }
+# 持续判定窗口：pressure >= 阈值后，在接下来 5 轮内均视为满足条件
+# （允许 pressure 因时间动态短暂回落，增加容错）
+CONFESSION_PRESSURE_WINDOW = 5
 # NOTE: requires_semantic 标志在 Phase 1 中暂不实现，Phase 2 再引入语义匹配
 
 # ──────────────────────────────────────────────
@@ -89,7 +92,7 @@ CONFESSION_PROGRESS_RATE = {
 # ──────────────────────────────────────────────
 
 # 默认证据出示次数（可在等级系统中覆盖）
-DEFAULT_EVIDENCE_USES = 3
+DEFAULT_EVIDENCE_USES = 4
 
 # 证据类型对压力的基础增量
 EVIDENCE_PRESSURE_BASE = {
@@ -109,14 +112,22 @@ EVIDENCE_STRENGTH_MULTIPLIER = 0.1  # strength 1-10，乘以 0.1 = 0.1-1.0
 DEFAULT_FEAR = 50  # 0-100
 
 # 恐惧对施压效果的影响系数
-# 实际压力增量 = 基础压力增量 × (fear / FEAR_NEUTRAL)
+# 实际压力增量 = 基础压力增量 × soft_factor
+# soft_factor = clamp((fear / FEAR_NEUTRAL) × (1 / (1 + defiance × 0.01)), 0.3, 1.5)
 FEAR_NEUTRAL = 50  # fear=50时效果正常
 
-# 恐惧自然冷却
-FEAR_NATURAL_DECAY_RATE = -1  # 每5秒 -1
+# 压力综合系数软上限（防止极端性格差距过大）
+PRESSURE_SOFT_FACTOR_MIN = 0.3
+PRESSURE_SOFT_FACTOR_MAX = 1.5
 
-# 反扑：恐惧极低阈值
+# 恐惧自然冷却（每轮 -1，在 submit_action 末尾结算）
+FEAR_PER_TURN_DECAY = -1
+
+# 反扑：恐惧极低阈值（固定值，嫌疑人维度文档中定义动态化方案）
 FEAR_PROVOCATION_THRESHOLD = 15  # fear<15 触发挑衅态度
+
+# 出示错误证据的恐惧惩罚
+FEAR_PENALTY_WRONG_EVIDENCE = 10
 
 # ──────────────────────────────────────────────
 # 嫌疑人多维隐藏指标
@@ -187,13 +198,47 @@ DIMENSION_VISIBILITY = {
 # ──────────────────────────────────────────────
 
 # 每个嫌疑人的聊天轮次上限
-CHAT_TURNS_PER_SUSPECT = 10
+CHAT_TURNS_PER_SUSPECT = 12
 
-# 每个嫌疑人的施压次数上限
-PRESSURE_USES_PER_SUSPECT = 1
+# 每个嫌疑人的施压次数上限（第二次效果减半）
+PRESSURE_USES_PER_SUSPECT = 2
 
-# 每个嫌疑人的共情次数上限
-EMPATHY_USES_PER_SUSPECT = 1
+# 每个嫌疑人的共情次数上限（第二次效果减半）
+EMPATHY_USES_PER_SUSPECT = 2
+
+# ──────────────────────────────────────────────
+# 行动点数（AP）系统
+# ──────────────────────────────────────────────
+
+# 默认总行动点数（普通难度基准）
+DEFAULT_TOTAL_ACTION_POINTS = 20
+
+# 各操作的行动点数消耗
+ACTION_AP_COST = {
+    "chat": 1,              # 对话：最基础操作
+    "pressure": 2,          # 施压：强力操作
+    "empathy": 2,           # 共情：与施压等价
+    "present_evidence": 2,  # 出示证据：关键操作
+}
+
+# 错误操作的AP惩罚（额外扣减，不包含操作本身的AP消耗）
+AP_PENALTY = {
+    "wrong_evidence": 2,      # 出示错误证据：严重浪费
+    "wrong_pressure": 1,      # 施压失误：轻度浪费
+    "wrong_empathy": 1,       # 共情失误：轻度浪费
+    "innocent_breakdown": 3,  # 无辜崩溃：严重后果
+}
+
+# 压力/恐惧每轮动态（每次操作后结算，取代原基于秒的时间动态）
+PRESSURE_PER_TURN_DYNAMICS = {
+    "decay_zone": (0, 30),    # 低压力自然衰减区间
+    "decay_rate": -1,         # 每轮压力变化（低段衰减）
+    "stable_zone": (30, 70),  # 稳定区间
+    "stable_rate": 0,         # 稳定区不变化
+    "growth_zone": (70, 100), # 高压力自然增长区间
+    "growth_rate": 1,         # 每轮压力变化（高段增长）
+    "pressure_floor": 15,     # 最低压力保护
+}
 
 # ──────────────────────────────────────────────
 # Phase 2+ 配置预留（此处声明类型，值在对应 Phase 添加）
@@ -401,13 +446,21 @@ if action == "present_evidence":
     # 压力增量由引擎程序化计算（取代硬编码 +20 和 LLM 返回的 pressure_change）
     pressure_delta = 0
     if evidence.get("related_suspect") == suspect.name:
-        from core.game_config import EVIDENCE_PRESSURE_BASE, EVIDENCE_STRENGTH_MULTIPLIER, FEAR_NEUTRAL
+        from core.game_config import (
+            EVIDENCE_PRESSURE_BASE, EVIDENCE_STRENGTH_MULTIPLIER,
+            FEAR_NEUTRAL, PRESSURE_SOFT_FACTOR_MIN, PRESSURE_SOFT_FACTOR_MAX,
+        )
         base = EVIDENCE_PRESSURE_BASE.get(evidence_type, 10)
         strength = evidence.get("strength", 5)
         pressure_delta = int(base * (1 + strength * EVIDENCE_STRENGTH_MULTIPLIER))
-        # 恐惧值影响施压效果
-        fear_multiplier = suspect.fear / FEAR_NEUTRAL
-        pressure_delta = int(pressure_delta * fear_multiplier)
+        # 恐惧值和抗压性综合影响施压效果（带软上限，防止极端差距）
+        fear_factor = suspect.fear / FEAR_NEUTRAL
+        defiance_factor = 1.0 / (1.0 + suspect.defiance * 0.01)
+        raw_factor = fear_factor * defiance_factor
+        soft_factor = max(PRESSURE_SOFT_FACTOR_MIN, min(PRESSURE_SOFT_FACTOR_MAX, raw_factor))
+        pressure_delta = int(pressure_delta * soft_factor)
+        # 出示正确证据 → 恐惧上升（+8，与错误-10形成正向激励）
+        suspect.fear = min(100, suspect.fear + 8)
         self.presented_evidence_ids.add(evidence_id)
     else:
         # 出示错误证据 → 恐惧下降 + 记录错误
@@ -444,7 +497,7 @@ def _check_victory(self, suspect, result: dict) -> Optional[StateChangeEvent]:
     Returns:
         StateChangeEvent 或 None
     """
-    # 条件1：供词层级 4
+    # 条件1：供词层级 4 → 完全崩溃（主要胜利条件）
     if suspect.confession_level >= 4 and self.state != "breakdown":
         self.state = "breakdown"
         return StateChangeEvent(
@@ -453,7 +506,7 @@ def _check_victory(self, suspect, result: dict) -> Optional[StateChangeEvent]:
             verdict_reason=f"{suspect.name} 完全崩溃认罪",
         )
 
-    # 条件2：secret_triggered + 高供词层级
+    # 条件2：secret_triggered + 高供词层级 → 完美胜利（彩蛋，不纳入平衡基准）
     if result.get("secret_triggered") and suspect.confession_level >= 3:
         self.state = "breakdown"
         return StateChangeEvent(
@@ -461,6 +514,12 @@ def _check_victory(self, suspect, result: dict) -> Optional[StateChangeEvent]:
             new_state="breakdown",
             verdict_reason=f"{suspect.name} 泄露了秘密: {result['secret_triggered']}",
         )
+
+    # 条件3：部分突破（供词层级>=2 + pressure>=60）→ 不结束游戏，但解锁额外信息
+    if suspect.confession_level >= 2 and suspect.pressure >= 60 and self.state == "interrogating":
+        # 部分胜利不返回 StateChangeEvent，而是发送系统提示
+        # 由调用方决定是否继续审讯或切换嫌疑人
+        pass  # 部分突破状态由 UI 层展示，不强制结束
 
     return None
 ```
@@ -519,7 +578,9 @@ def __init__(self, case_data: dict) -> None:
     ]
     self.current_suspect_index: int = 0
     self.presented_evidence_ids: set = set()
-    self.time_left: int = case_data["interrogation_time_limit_sec"]
+    self.action_points_remaining: int = case_data.get(
+        "total_action_points", DEFAULT_TOTAL_ACTION_POINTS
+    )
     self.state: str = "selecting"
 
     # 新增：证据使用次数
@@ -641,8 +702,8 @@ UIEvent = Union[
     NewMessageEvent,
     SuspectUpdateEvent,
     StateChangeEvent,
-    TimerTickEvent,
-    ConfessionUpdateEvent,  # 新增
+    ActionPointUpdateEvent,
+    ConfessionUpdateEvent,
 ]
 ```
 
@@ -766,13 +827,13 @@ engine.suspects[i].confession_progress = suspect_state.get("confession_progress"
 engine.suspects[i].turn_count = suspect_state.get("turn_count", 0)
 ```
 
-新增 `evidence_uses_remaining` 的序列化：
+新增 `action_points_remaining` 的序列化：
 ```python
 # to_dict 中:
-"evidence_uses_remaining": self.evidence_uses_remaining,
+"action_points_remaining": self.action_points_remaining,
 
 # from_dict 中:
-engine.evidence_uses_remaining = state.get("evidence_uses_remaining", DEFAULT_EVIDENCE_USES)
+engine.action_points_remaining = state.get("action_points_remaining", DEFAULT_TOTAL_ACTION_POINTS)
 ```
 
 ---
@@ -1052,9 +1113,9 @@ self.fear: int = suspect_data.get("fear", 50)
 ```python
 from core.game_config import FEAR_NEUTRAL, DIMENSION_BOUNDS
 
-# 出示正确证据 → fear+5
+# 出示正确证据 → fear+8（与错误-10形成正向净效应）
 if evidence.get("related_suspect") == suspect.name:
-    suspect.fear = min(DIMENSION_BOUNDS["fear"]["max"], suspect.fear + 5)
+    suspect.fear = min(DIMENSION_BOUNDS["fear"]["max"], suspect.fear + 8)
 
 # 出示错误证据 → fear-10
 else:
@@ -1070,7 +1131,7 @@ else:
 # 被同伴出卖 → fear+10
 ```
 
-恐惧自然冷却在 `tick()` 中实现（每5秒 -1）。
+恐惧自然冷却在 `submit_action` 末尾实现（每轮 -1）。
 
 ### 新增事件类型
 
@@ -1088,9 +1149,9 @@ UIEvent = Union[
     NewMessageEvent,
     SuspectUpdateEvent,
     StateChangeEvent,
-    TimerTickEvent,
+    ActionPointUpdateEvent,
     ConfessionUpdateEvent,
-    FearUpdateEvent,  # 新增
+    FearUpdateEvent,
 ]
 ```
 
@@ -1280,9 +1341,9 @@ engine.suspects[i].credibility = suspect_state.get("credibility", 50)
 
 ### 设计（混合方案）
 
-- **聊天轮次限制**：每个嫌疑人最多10轮对话，超过后该嫌疑人"拒绝再说话"
-- **施压限制**：每个嫌疑人只能施压1次
-- **共情限制**：每个嫌疑人只能共情1次
+- **聊天轮次限制**：每个嫌疑人最多12轮对话，超过后该嫌疑人"拒绝再说话"
+- **施压限制**：每个嫌疑人可施压2次，第二次效果减半（如+15→+8）
+- **共情限制**：每个嫌疑人可共情2次，第二次效果减半（如fear-10→fear-5）
 
 ### 修改 `core/interrogation.py` — 新增交互追踪
 
@@ -1307,24 +1368,37 @@ if self.chat_turns_remaining[self.current_suspect_index] <= 0:
     ))
     return events
 
-# 根据操作类型扣减对应次数
-if action == "pressure":
-    if self.pressure_uses_remaining[self.current_suspect_index] <= 0:
+    # 检查行动点数
+    from core.game_config import ACTION_AP_COST
+    ap_cost = ACTION_AP_COST.get(action, 1)
+    if self.action_points_remaining < ap_cost:
         events.append(self._system_message(
-            f"你已经对 {suspect.name} 施压过了。"
+            f"行动点数不足（需要{ap_cost}AP，剩余{self.action_points_remaining}AP）。"
         ))
         return events
-    self.pressure_uses_remaining[self.current_suspect_index] -= 1
-elif action == "empathy":
-    if self.empathy_uses_remaining[self.current_suspect_index] <= 0:
-        events.append(self._system_message(
-            f"你已经对 {suspect.name} 共情过了。"
-        ))
-        return events
-    self.empathy_uses_remaining[self.current_suspect_index] -= 1
 
-# 每次有效交互扣减聊天轮次
-self.chat_turns_remaining[self.current_suspect_index] -= 1
+    # 根据操作类型扣减对应次数
+    if action == "pressure":
+        if self.pressure_uses_remaining[self.current_suspect_index] <= 0:
+            events.append(self._system_message(
+                f"你已经对 {suspect.name} 施压过了。"
+            ))
+            return events
+        # 第二次施压效果减半标记
+        self._pressure_half_effect = self.pressure_uses_remaining[self.current_suspect_index] <= 1
+        self.pressure_uses_remaining[self.current_suspect_index] -= 1
+    elif action == "empathy":
+        if self.empathy_uses_remaining[self.current_suspect_index] <= 0:
+            events.append(self._system_message(
+                f"你已经对 {suspect.name} 共情过了。"
+            ))
+            return events
+        # 第二次共情效果减半标记
+        self._empathy_half_effect = self.empathy_uses_remaining[self.current_suspect_index] <= 1
+        self.empathy_uses_remaining[self.current_suspect_index] -= 1
+
+    # 扣减行动点数
+    self.action_points_remaining -= ap_cost
 ```
 
 ### 交互限制 UI
@@ -1333,9 +1407,9 @@ self.chat_turns_remaining[self.current_suspect_index] -= 1
 
 ```html
 <div class="interaction-limits">
-    <span class="limit-badge" id="chat-remaining">💬 10</span>
-    <span class="limit-badge" id="pressure-remaining">👊 1</span>
-    <span class="limit-badge" id="empathy-remaining">🤝 1</span>
+    <span class="limit-badge" id="chat-remaining">💬 12</span>
+    <span class="limit-badge" id="pressure-remaining">👊 2</span>
+    <span class="limit-badge" id="empathy-remaining">🤝 2</span>
 </div>
 ```
 

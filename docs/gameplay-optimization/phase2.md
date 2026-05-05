@@ -247,6 +247,10 @@ elif action == "empathy":
     # 共情降低恐惧但提升供词进度
     from core.game_config import FEAR_NEUTRAL
     empathy_effect = suspect.empathy_susceptibility / FEAR_NEUTRAL
+    # 第二次共情效果减半
+    uses_left = self.empathy_uses_remaining[self.current_suspect_index]
+    if uses_left <= 1:  # 最后一次（第二次）
+        empathy_effect *= 0.5
     suspect.fear = max(0, suspect.fear - int(10 * empathy_effect))
     # 共情增加供词进度（而非压力）
     suspect.confession_progress = min(1.0, suspect.confession_progress + 0.1 * empathy_effect)
@@ -257,7 +261,7 @@ elif action == "empathy":
 
 共情不增加压力，但增加供词进度和降低恐惧值——适用于"高压力但低供词"的情况，帮助突破供词瓶颈。
 
-**施压与共情互斥**：施压成功后 `empathy_susceptibility -= 2`（施压让嫌疑人关上心门），共情成功后 `empathy_susceptibility += 2`（被理解后更愿意敞开）。玩家需要选择先施压还是先共情。
+**施压与共情反馈**：施压成功后 `empathy_susceptibility -= 2`（施压让嫌疑人关上心门），共情成功后 `empathy_susceptibility += 2`（被理解后更愿意敞开）。每人各有2次机会（第二次效果减半），玩家需要选择施压/共情的顺序和时机。
 
 ---
 
@@ -365,7 +369,7 @@ def _check_proactive_speech(self, suspect) -> Optional[dict]:
     触发条件：
     - 压力 > 70
     - 每 5 轮对话检查一次（而非每秒）
-    - 概率基于压力值（pressure/200，即 35%-50%）
+    - 概率基于压力值（pressure/300，即 23%-33%）
 
     Returns:
         respond 结果字典，或 None（不触发）
@@ -376,7 +380,7 @@ def _check_proactive_speech(self, suspect) -> Optional[dict]:
         return None
 
     import random
-    probability = suspect.pressure / 200  # 35% - 50%
+    probability = suspect.pressure / 300  # 23% - 33%（降低频率，避免过度干扰）
     if random.random() >= probability:
         return None
 
@@ -411,86 +415,112 @@ if proactive_result:
 
 ---
 
-## 2.6 时间-压力双向动态
+## 2.6 压力/恐惧每轮动态
 
 ### 设计
 
-压力值随时间自然变化，创造博弈空间：
-- **低压力段（0-40）**：自然衰减，每秒 -0.5 压力（嫌疑人逐渐恢复冷静）
-- **高压力段（60+）**：自然增长，每秒 +0.3 压力（审讯室压迫感 + 心理防线崩溃）
-- **中间段（40-60）**：稳定区，不增不减
+行动点数系统取代了时间倒计时，压力和恐惧的动态变化也相应地从"每秒结算"改为"每轮结算"（每次玩家操作后结算一次）。创造博弈空间：
 
-这创造了一个有趣的博弈：**低压力时必须主动出击**，否则压力会自行回落；**高压力时可以适当等待**，压力会自行推高。
+- **低压力段（0-30）**：自然衰减，每轮 -1 压力（嫌疑人逐渐恢复冷静）
+- **高压力段（70+）**：自然增长，每轮 +1 压力（审讯室压迫感 + 心理防线崩溃）
+- **中间段（30-70）**：稳定区，不增不减
 
-### game_config.py Phase 2 配置新增
+这意味着：**低压力时必须主动出击**，否则每轮压力会自行回落；**高压力时可以耐心等待**，压力会自行推高（但消耗AP）。
+
+### game_config.py 配置（Phase 1 已定义）
 
 ```python
-# 时间-压力动态配置
-PRESSURE_TIME_DYNAMICS = {
-    "decay_zone": (0, 40),       # 低压力自然衰减区间
-    "decay_rate": -0.5,          # 每秒压力变化（负值=衰减）
-    "stable_zone": (40, 60),     # 稳定区间
-    "stable_rate": 0.0,          # 稳定区不变化
-    "growth_zone": (60, 100),    # 高压力自然增长区间
-    "growth_rate": 0.3,          # 每秒压力变化（正值=增长）
+# 压力/恐惧每轮动态（在 Phase 1 game_config.py 中已定义）
+PRESSURE_PER_TURN_DYNAMICS = {
+    "decay_zone": (0, 30),
+    "decay_rate": -1,         # 每轮衰减
+    "stable_zone": (30, 70),
+    "stable_rate": 0,
+    "growth_zone": (70, 100),
+    "growth_rate": 1,         # 每轮增长
+    "pressure_floor": 15,
 }
+
+FEAR_PER_TURN_DECAY = -1      # 每轮恐惧自然冷却
 ```
 
-### 修改 `core/interrogation.py` — tick 中压力自然变化
+### 修改 `core/interrogation.py` — 每轮压力/恐惧动态
 
 ```python
-def _apply_pressure_dynamics(self, dt_seconds: float) -> List[UIEvent]:
-    """每 tick 应用时间-压力动态变化。
+def _apply_per_turn_dynamics(self, suspect) -> List[UIEvent]:
+    """每次操作后结算压力/恐惧的自然动态变化。
 
-    Args:
-        dt_seconds: 距上次 tick 的秒数
+    取代原 tick() 中的 _apply_pressure_dynamics()。
+    无需 dt_seconds 参数，每轮变化值在配置中直接定义。
 
     Returns:
-        压力变化事件列表（仅变化时才产生事件）
+        状态变化事件列表
     """
-    from core.game_config import PRESSURE_TIME_DYNAMICS
-
+    from core.game_config import PRESSURE_PER_TURN_DYNAMICS, FEAR_PER_TURN_DECAY, DIMENSION_BOUNDS
     events = []
-    dynamics = PRESSURE_TIME_DYNAMICS
+    dynamics = PRESSURE_PER_TURN_DYNAMICS
 
-    for i, suspect in enumerate(self.suspects):
-        if i == self.current_suspect_index:
-            # 当前正在审讯的嫌疑人，压力动态生效
-            old_pressure = suspect.pressure
+    # ── 压力每轮动态 ──
+    old_pressure = suspect.pressure
+    if suspect.pressure < dynamics["decay_zone"][1]:
+        suspect.pressure = max(
+            dynamics["pressure_floor"],
+            suspect.pressure + dynamics["decay_rate"]
+        )
+    elif suspect.pressure >= dynamics["growth_zone"][0]:
+        suspect.pressure = min(100, suspect.pressure + dynamics["growth_rate"])
 
-            if suspect.pressure < dynamics["decay_zone"][1]:
-                # 低压力衰减
-                suspect.pressure = max(0, suspect.pressure + dynamics["decay_rate"] * dt_seconds)
-            elif suspect.pressure >= dynamics["growth_zone"][0]:
-                # 高压力增长
-                suspect.pressure = min(100, suspect.pressure + dynamics["growth_rate"] * dt_seconds)
+    if suspect.pressure != old_pressure:
+        events.append(SuspectUpdateEvent(
+            type="suspect_update",
+            suspect_index=self.current_suspect_index,
+            pressure=suspect.pressure,
+            secret_triggered=None,
+        ))
 
-            # 压力变化超过 2 点时发送事件（避免频繁更新 UI）
-            if abs(suspect.pressure - old_pressure) >= 2:
-                suspect.pressure = int(suspect.pressure)
-                events.append(SuspectUpdateEvent(
-                    type="suspect_update",
-                    suspect_index=i,
-                    pressure=suspect.pressure,
-                    secret_triggered=None,
-                ))
+    # ── 恐惧每轮自然冷却 ──
+    old_fear = suspect.fear
+    suspect.fear = max(
+        DIMENSION_BOUNDS["fear"]["min"],
+        suspect.fear + FEAR_PER_TURN_DECAY
+    )
+    if suspect.fear != old_fear:
+        events.append(FearUpdateEvent(
+            type="fear_update",
+            suspect_index=self.current_suspect_index,
+            fear=suspect.fear,
+            reason="natural_decay",
+        ))
 
     return events
 ```
 
-在 `tick()` 方法中调用（每秒1次）：
+**在 `submit_action` 末尾调用**（取代原 tick() 中的调用）：
 
 ```python
-def tick(self):
-    if self.state != "interrogating":
-        return []
-    self.time_left -= 1
-    events = [TimerTickEvent(type="timer_tick", time_left=self.time_left)]
-    # 时间-压力动态
-    dynamics_events = self._apply_pressure_dynamics(1.0)
-    events.extend(dynamics_events)
-    return events
+# ── 每轮动态结算 ──
+dynamics_events = self._apply_per_turn_dynamics(suspect)
+events.extend(dynamics_events)
+
+# ── 行动点数更新事件 ──
+ap_event: ActionPointUpdateEvent = {
+    "type": "ap_update",
+    "remaining": self.action_points_remaining,
+    "total": self.total_action_points,
+}
+events.append(ap_event)
+
+# ── 检查行动点数耗尽（失败条件）──
+if self.action_points_remaining <= 0 and self.state == "interrogating":
+    self.state = "verdict"
+    events.append(StateChangeEvent(
+        type="state_change",
+        new_state="verdict",
+        verdict_reason="行动点数耗尽，律师介入",
+    ))
 ```
+
+**`tick()` 方法删除**：不再需要每秒回调，所有动态改为每轮结算。
 
 ---
 
@@ -500,48 +530,49 @@ def tick(self):
 
 在 Phase 1 的 `mistake_log` 基础上，增加更多错误场景和对应惩罚：
 
-| 错误类型 | 触发条件 | 恐惧惩罚 | 时间惩罚 | 评分惩罚 |
-|---------|---------|---------|---------|---------|
-| `wrong_evidence` | 出示与当前嫌疑人无关的证据 | fear -10 | time -15s | -5分 |
-| `wrong_pressure` | 对错误嫌疑人施压（无相关证据时施压） | fear -5 | time -10s | -3分 |
-| `wrong_empathy` | 对真凶共情（共情后真凶恐惧下降） | fear +5（真凶恐惧反而上升，因为觉得你在套话） | time -5s | -3分 |
-| `innocent_breakdown` | 无辜嫌疑人达到崩溃（confession_level=4 但非真凶） | — | time -30s | -20分 |
+| 错误类型 | 触发条件 | 恐惧惩罚 | AP惩罚 | 评分惩罚 |
+|---------|---------|---------|--------|---------|
+| `wrong_evidence` | 出示与当前嫌疑人无关的证据 | fear -10 | **-2 AP** | -5分 |
+| `wrong_pressure` | 对错误嫌疑人施压（无相关证据时施压） | fear -5 | **-1 AP** | -3分 |
+| `wrong_empathy` | 对真凶共情（共情后真凶恐惧下降） | fear +5（真凶恐惧反而上升，因为觉得你在套话） | **-1 AP** | -3分 |
+| `innocent_breakdown` | 无辜嫌疑人达到崩溃（confession_level=4 但非真凶） | — | **-3 AP** | -20分 |
 
 ### 修改 `core/interrogation.py` — 错误检测
 
 ```python
 def _check_mistake(self, action: str, suspect, result: dict) -> Optional[dict]:
     """检查操作是否为错误操作，返回错误记录或 None。"""
+    from core.game_config import AP_PENALTY
     is_culprit = suspect.name in [
         s.get("name") for s in self.case.get("suspects", [])
         if s.get("is_culprit", False)
     ]
 
     if action == "present_evidence":
-        # 出示错误证据（Phase 1 已实现部分，此处补充时间惩罚）
+        # 出示错误证据
         if not any(
             self._find_evidence(eid).get("related_suspect") == suspect.name
             for eid in self.presented_evidence_ids
         ):
-            self.time_left = max(0, self.time_left - 15)
+            self.action_points_remaining = max(0, self.action_points_remaining - AP_PENALTY["wrong_evidence"])
             return {"type": "wrong_evidence", "suspect_name": suspect.name}
 
     elif action == "pressure":
         if not is_culprit:
             suspect.fear = max(0, suspect.fear - 5)
-            self.time_left = max(0, self.time_left - 10)
+            self.action_points_remaining = max(0, self.action_points_remaining - AP_PENALTY["wrong_pressure"])
             return {"type": "wrong_pressure", "suspect_name": suspect.name}
 
     elif action == "empathy":
         if is_culprit:
             # 对真凶共情：真凶恐惧反而上升（觉得你在套话）
             suspect.fear = min(100, suspect.fear + 5)
-            self.time_left = max(0, self.time_left - 5)
+            self.action_points_remaining = max(0, self.action_points_remaining - AP_PENALTY["wrong_empathy"])
             return {"type": "wrong_empathy", "suspect_name": suspect.name}
 
     # 无辜崩溃检查
     if suspect.confession_level >= 4 and not is_culprit:
-        self.time_left = max(0, self.time_left - 30)
+        self.action_points_remaining = max(0, self.action_points_remaining - AP_PENALTY["innocent_breakdown"])
         return {"type": "innocent_breakdown", "suspect_name": suspect.name}
 
     return None
@@ -555,7 +586,7 @@ class MistakeEvent(TypedDict):
     mistake_type: str  # "wrong_evidence" / "wrong_pressure" / "wrong_empathy" / "innocent_breakdown"
     suspect_index: int
     description: str
-    time_penalty: int
+    ap_penalty: int
 ```
 
 ### 错误提示 UI
@@ -563,10 +594,10 @@ class MistakeEvent(TypedDict):
 错误操作时在聊天区显示红色警告：
 
 ```
-⚠ 错误证据！该证据与当前嫌疑人无关。恐惧值-10，时间-15秒。
-⚠ 施压失误！你对无辜者施压了。恐惧值-5，时间-10秒。
-⚠ 共情失误！真凶不为所动，反而提高了警惕。恐惧值+5，时间-5秒。
-🚨 无辜者崩溃！你逼供了无辜的人。时间-30秒，评分严重扣分。
+⚠ 错误证据！该证据与当前嫌疑人无关。恐惧值-10，行动点-2。
+⚠ 施压失误！你对无辜者施压了。恐惧值-5，行动点-1。
+⚠ 共情失误！真凶不为所动，反而提高了警惕。恐惧值+5，行动点-1。
+🚨 无辜者崩溃！你逼供了无辜的人。行动点-3，评分严重扣分。
 ```
 
 ---
@@ -583,52 +614,65 @@ class MistakeEvent(TypedDict):
 
 ```python
 def _check_proactive(self, suspect) -> Optional[ProactiveEvent]:
-    """检查反扑条件。"""
+    """检查反扑条件。
+
+    优先级规则（从高到低）：挑衅 > 反击质问 > 恢复镇定 > 试探 > 得意回应
+    冷却规则：同一嫌疑人3轮内不重复触发同类型反扑。
+    """
     from core.game_config import PROACTIVE_TRIGGERS, FEAR_PROVOCATION_THRESHOLD
-    
-    # 挑衅态度：fear < 15
+
+    # 冷却检查
+    last_proactive_turn = getattr(suspect, '_last_proactive_turn', -999)
+    last_proactive_type = getattr(suspect, '_last_proactive_type', '')
+    if suspect.turn_count - last_proactive_turn < 3:
+        return None  # 冷却中
+
+    triggered = None
+
+    # 优先级1：挑衅态度（fear < 15，最紧急）
     if suspect.fear < FEAR_PROVOCATION_THRESHOLD:
-        return ProactiveEvent(
+        triggered = ProactiveEvent(
             type="proactive",
             suspect_index=self.current_suspect_index,
             proactive_type="provocation",
             content=self._generate_proactive_content(suspect, "provocation"),
             effects={"pressure": -2, "defiance": +2},
         )
-    
-    # 反击质问：连续2次反驳成功
-    if self._consecutive_rebuttal_success >= 2:
+    # 优先级2：反击质问（连续2次反驳成功）
+    elif self._consecutive_rebuttal_success >= 2:
         self._consecutive_rebuttal_success = 0  # 重置
-        return ProactiveEvent(
+        triggered = ProactiveEvent(
             type="proactive",
             suspect_index=self.current_suspect_index,
             proactive_type="counter_attack",
             content=self._generate_proactive_content(suspect, "counter_attack"),
             effects={"fear": +10, "defiance": +3},
         )
-    
-    # 试探玩家：pressure>40 且 fear<20
-    if suspect.pressure > 40 and suspect.fear < 20:
-        return ProactiveEvent(
-            type="proactive",
-            suspect_index=self.current_suspect_index,
-            proactive_type="probe",
-            content=self._generate_proactive_content(suspect, "probe"),
-            effects={"fear": -10},  # 仅当玩家无法出示证据时
-        )
-    
-    # 恢复镇定：连续3轮无有效施压
-    if self._consecutive_idle_turns >= 3:
+    # 优先级3：恢复镇定（连续3轮无有效施压）
+    elif self._consecutive_idle_turns >= 3:
         self._consecutive_idle_turns = 0
-        return ProactiveEvent(
+        triggered = ProactiveEvent(
             type="proactive",
             suspect_index=self.current_suspect_index,
             proactive_type="recover",
             content=self._generate_proactive_content(suspect, "recover"),
             effects={"defiance": +3, "fear": -5, "deception_skill": +2},
         )
-    
-    return None
+    # 优先级4：试探玩家（pressure>40 且 fear<20）
+    elif suspect.pressure > 40 and suspect.fear < 20:
+        triggered = ProactiveEvent(
+            type="proactive",
+            suspect_index=self.current_suspect_index,
+            proactive_type="probe",
+            content=self._generate_proactive_content(suspect, "probe"),
+            effects={"fear": -10},  # 仅当玩家无法出示证据时
+        )
+
+    if triggered:
+        suspect._last_proactive_turn = suspect.turn_count
+        suspect._last_proactive_type = triggered["proactive_type"]
+
+    return triggered
 ```
 
 ### 新增事件类型
