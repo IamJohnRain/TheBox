@@ -1,7 +1,7 @@
 ---
 description: 测试Agent，负责为各里程碑编写自动化验收测试
 mode: subagent
-model: xiaomi-token-plan-cn/MiMo-V2.5
+model: xiaomi-token-plan-cn/mimo-v2.5-pro
 temperature: 0.1
 permission:
   edit: allow
