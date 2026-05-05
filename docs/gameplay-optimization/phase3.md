@@ -1,6 +1,6 @@
 # Phase 3：工具与成长 — 消耗品工具 + 三级心理侧写 + 玩家等级（优化版 v1.3）
 
-> **评审变更**：Phase 3拆分为3a+3b、工具系统预留策略模式接口、修复psych_collapse直接跳级、threat随机改为压力驱动、lie_detector knowledge泄露防护、数据库版本号迁移机制  
+> **评审变更**：Phase 3拆分为3a+3b+3c、工具系统预留策略模式接口、修复psych_collapse直接跳级、threat随机改为压力驱动、lie_detector knowledge泄露防护、数据库版本号迁移机制
 > **v1.2 变更**：心理侧写升级为三级体系（初级/高级/大师），对应解锁不同隐藏维度可见性；loyalty维度影响多人对质效果  
 > **v1.3 变更**：侧写显示当前动态值而非初始值、credibility不可见（侧写不显示）、7种性格+主副组合
 
@@ -14,7 +14,7 @@ Phase 1、Phase 2 完成。
 
 ---
 
-## Phase 3a：工具系统引擎 + 基础工具（6天）
+## Phase 3a：工具系统引擎 + 基础工具（8天）
 
 ### 3a.1 工具系统引擎
 
@@ -401,7 +401,9 @@ class PsychCollapseTool(Tool):
 
 ---
 
-### 3a.3 复杂工具实现（4个）
+### 3c.1 复杂工具实现（4个）
+
+> v1.6 执行口径：以下复杂工具不要和 Phase 3a 工具框架、Phase 3b 玩家等级放在同一个任务包里。复杂工具依赖工具注册表、等级解锁和隐藏维度稳定后再做，作为 Phase 3c 验收。
 
 #### 工具5：测谎仪
 
@@ -697,7 +699,7 @@ use_tool = Signal(str, str)  # tool_name, content
 
 ---
 
-## Phase 3b：玩家等级 + 数据库（5天）
+## Phase 3b：玩家等级 + 数据库（6天）
 
 ### 3b.1 玩家等级引擎
 
@@ -768,6 +770,22 @@ class PlayerProfile:
     def get_evidence_uses(self) -> int:
         """获取当前等级的证据使用次数。"""
         return LEVEL_UNLOCKS.get(self.level, {}).get("evidence_uses", 4)
+
+    def get_total_action_points(self, base_ap: int) -> int:
+        """根据等级奖励计算本局总 AP。"""
+        bonus = 0
+        for level, unlock in LEVEL_UNLOCKS.items():
+            if level <= self.level:
+                bonus += unlock.get("ap_bonus", 0)
+        return base_ap + bonus
+
+    def get_initial_pressure(self, base_pressure: int = 20) -> int:
+        """根据等级奖励计算初始压力。奖励幅度保持小，避免破坏低难度平衡。"""
+        delta = 0
+        for level, unlock in LEVEL_UNLOCKS.items():
+            if level <= self.level:
+                delta += unlock.get("initial_pressure_delta", 0)
+        return max(0, min(100, base_pressure + delta))
 
     def get_available_tools(self) -> list:
         """获取当前等级可用的工具列表。"""
@@ -874,8 +892,8 @@ def _migrate_v1_to_v2(cursor):
 # core/game_config.py — Phase 3b 添加
 
 EXPERIENCE_CURVE: List[int] = [
-    0, 50, 120, 200, 300, 450, 600, 800, 1050, 1350,
-    1700, 2100, 2550, 3050, 3600, 4200, 4850, 5550, 6300, 7100,
+    0, 50, 110, 180, 260, 350, 460, 580, 720, 880,
+    1060, 1260, 1480, 1720, 1980, 2260, 2560, 2880, 3220, 3580,
 ]
 
 LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
@@ -889,15 +907,15 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
     8:  {"tools": ["memory_recall"], "evidence_uses": 5, "desc": "记忆回溯"},
     9:  {"tools": [], "evidence_uses": 5, "desc": "证据次数保持"},
     10: {"tools": ["psych_profile_advanced", "silent_pressure"], "evidence_uses": 6, "desc": "高级侧写：可见+defiance/empathy；沉默施压；困难难度解锁；证据次数+1"},
-    11: {"tools": [], "evidence_uses": 6, "desc": "行动点数+3"},
-    12: {"tools": [], "evidence_uses": 6, "desc": "初始压力降低10"},
+    11: {"tools": [], "evidence_uses": 6, "ap_bonus": 2, "desc": "行动点数+2"},
+    12: {"tools": [], "evidence_uses": 6, "initial_pressure_delta": -5, "desc": "初始压力降低5"},
     13: {"tools": [], "evidence_uses": 6, "desc": "证据次数保持"},
     14: {"tools": ["threat"], "evidence_uses": 7, "desc": "威胁；证据次数+1"},
     15: {"tools": ["psych_profile_master", "dual_interrogation"], "evidence_uses": 7, "desc": "大师侧写：可见全部维度；多人对质；噩梦难度解锁"},
-    16: {"tools": [], "evidence_uses": 7, "desc": "行动点数+3"},
+    16: {"tools": [], "evidence_uses": 7, "ap_bonus": 2, "desc": "行动点数+2"},
     17: {"tools": [], "evidence_uses": 7, "desc": "证据次数保持"},
     18: {"tools": ["psych_collapse"], "evidence_uses": 8, "desc": "心理崩溃；证据次数+1"},
-    19: {"tools": [], "evidence_uses": 8, "desc": "初始压力再降10"},
+    19: {"tools": [], "evidence_uses": 8, "initial_pressure_delta": -5, "desc": "初始压力再降5"},
     20: {"tools": [], "evidence_uses": 8, "desc": "审讯大师：所有工具次数+1"},
 }
 ```
@@ -915,6 +933,19 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
     <span class="exp-text" id="player-exp-text">0/50</span>
 </div>
 ```
+
+---
+
+## Phase 3c：复杂工具验收范围（5天）
+
+Phase 3c 只实现高风险工具，不再修改工具框架、DB迁移或等级曲线。若 Phase 3a/3b 未通过，不应启动 Phase 3c。
+
+| 工具 | 风险 | 验收重点 |
+|------|------|----------|
+| `lie_detector` | 可能泄露 `knowledge` 或 truth | 输入只允许 personality、当前回复、公开上下文；测试确认不传隐藏知识 |
+| `threat` | 随机效果不可测 | 只由 pressure 阈值驱动，pressure>70 时触发沉默/恐惧变化 |
+| `dual_interrogation` | 多嫌疑人状态联动复杂 | 只在 pressure>loyalty 时给出提示，不直接改写真凶 |
+| `psych_collapse` | 绕过供词升级 | 必须调用 `check_confession_upgrade`，失败时最多给出进度/压力辅助，不直接 `level += 1` |
 
 ---
 
@@ -939,6 +970,44 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
 
 ---
 
+## 3.7 弱模型执行任务包与验收
+
+### 任务包拆分
+
+| 包 | 范围 | 允许修改 | 验收重点 |
+|----|------|----------|----------|
+| 3a-1 工具框架 | Tool抽象类、注册表、引擎调度、工具次数状态 | `core/tools/`, `core/interrogation.py`, `tests/test_tools.py` | 未注册工具报错，次数扣减与序列化正确 |
+| 3a-2 基础工具 | 初级/高级/大师侧写、记忆回溯、安全的沉默施压 | `core/tools/*.py`, `tests/test_tools_basic.py` | 侧写只显示等级允许维度，显示当前动态值 |
+| 3a-3 工具UI | 工具栏、按钮禁用、ToolUseEvent处理 | `ui/web/`, `ui/web_bridge.py`, `tests/test_tool_ui.py` | 次数变化前后端一致，AP不足禁用 |
+| 3b-1 玩家档案 | `PlayerProfile`、经验、升级、解锁查询 | `core/player.py`, `tests/test_player_profile.py` | 曲线阈值、ap_bonus、initial_pressure_delta正确 |
+| 3b-2 DB迁移 | player_profile表、版本号迁移、旧库兼容 | `core/db.py`, `tests/test_db_migrations.py` | v0/v1/v2迁移幂等，不丢旧session |
+| 3b-3 成长UI | 等级/经验条、难度解锁展示 | `ui/web/`, `tests/test_web_integration.py` | 等级变化后UI刷新 |
+| 3c-1 复杂工具 | 测谎/威胁/对质/心理崩溃 | `core/tools/`, `tests/test_advanced_tools.py` | 不泄露隐藏知识，不绕过供词和真凶判断 |
+
+### Definition of Done
+
+| 条件 | 要求 |
+|------|------|
+| 工具隔离 | 每个工具一个类，核心逻辑可单测，不把工具逻辑写进 `submit_action` |
+| 次数和AP | 使用工具后次数和AP同时正确扣减，存档恢复后不重置 |
+| 可见性 | 侧写工具严格按等级暴露维度，`credibility` 不显示 |
+| DB安全 | 迁移可重复执行，旧数据库无player_profile时自动补齐 |
+| 复杂工具安全 | 测谎不传 `knowledge`，心理崩溃不直接改 `confession_level` |
+| 回归 | Phase 1-2 快速测试仍通过 |
+
+### 阶段验收场景
+
+| 场景 | 验收方式 |
+|------|----------|
+| 低等级不可用 | Lv.1 只能看到基础工具，Lv.2 才能使用初级侧写 |
+| 侧写动态值 | 审讯中 fear/defiance 改变后，侧写显示当前值而非初始值 |
+| 工具耗尽 | 工具使用达到上限后按钮禁用，引擎拒绝再次执行 |
+| 升级解锁 | 增加经验跨越阈值后工具和证据次数刷新 |
+| 旧库迁移 | 空库、旧session库、已有player_profile库三种情况均可启动 |
+| 复杂工具边界 | 每个复杂工具覆盖成功、失败、AP不足、次数耗尽四类路径 |
+
+---
+
 ## Phase 3 评审后关键变更对照表
 
 | 变更项 | v1.0 原方案 | v1.3 优化方案 | 原因 |
@@ -948,7 +1017,7 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
 | `lie_detector` | 传入嫌疑人 `knowledge` | 仅传入 `personality` | P2：避免信息泄露 |
 | `threat` | `random.random() < 0.3` | `pressure > 70` 时沉默 | P2：压力驱动替代随机 |
 | 数据库 | `CREATE TABLE IF NOT EXISTS` | 版本号 + 增量迁移 | P1：支持schema升级 |
-| Phase 3 拆分 | 单阶段 | 3a(工具引擎,7天)+3b(成长,5天) | P1：降低单阶段复杂度 |
+| Phase 3 拆分 | 单阶段 | 3a(工具引擎,8天)+3b(成长,6天)+3c(复杂工具,5天) | P1：降低单阶段复杂度，适配弱模型任务包 |
 | 心理侧写 | 单一工具 psych_profile | 三级体系：basic/advanced/master | P1：对应隐藏维度可见性 |
 | 工具总数 | 8个 | 10个（3个侧写 + 7个其他） | 增强：侧写分级更精细 |
 | dual_interrogation | 无loyalty逻辑 | loyalty维度影响多人对质效果 | P1：维度指标参与机制 |

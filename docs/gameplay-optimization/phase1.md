@@ -72,6 +72,8 @@ CONFESSION_PRESSURE_WINDOW = 5
 # ──────────────────────────────────────────────
 
 # 压力段定义
+DEFAULT_INITIAL_PRESSURE = 20  # 新局初始压力，替代当前实现中的 50
+
 PRESSURE_SEGMENTS = {
     "low":    (0, 30),
     "medium": (30, 60),
@@ -95,10 +97,12 @@ CONFESSION_PROGRESS_RATE = {
 DEFAULT_EVIDENCE_USES = 4
 
 # 证据类型对压力的基础增量
+# v1.5 调整：在 AP/每轮制下，原 15/10/8 会让冷静+固执型在 12 轮内停在层级3。
+# 18/12/9 可让最难型在 12 轮左右可达，但仍明显慢于胆小型。
 EVIDENCE_PRESSURE_BASE = {
-    "physical": 15,   # 物证：直接、难以否认
-    "document": 10,   # 书证：间接但有力
-    "testimony": 8,   # 证言：可反驳
+    "physical": 18,   # 物证：直接、难以否认
+    "document": 12,   # 书证：间接但有力
+    "testimony": 9,   # 证言：可反驳
 }
 
 # 证据强度系数（乘以基础增量）
@@ -197,7 +201,7 @@ DIMENSION_VISIBILITY = {
 # 交互限制
 # ──────────────────────────────────────────────
 
-# 每个嫌疑人的聊天轮次上限
+# 每个嫌疑人的自由聊天上限；证据/施压/共情不消耗该次数，但都会计入 turn_count
 CHAT_TURNS_PER_SUSPECT = 12
 
 # 每个嫌疑人的施压次数上限（第二次效果减半）
@@ -211,7 +215,8 @@ EMPATHY_USES_PER_SUSPECT = 2
 # ──────────────────────────────────────────────
 
 # 默认总行动点数（普通难度基准）
-DEFAULT_TOTAL_ACTION_POINTS = 20
+# v1.5 调整：22 AP 给标准成功路径留下约 2-4 AP 容错，避免一次误点直接崩盘。
+DEFAULT_TOTAL_ACTION_POINTS = 22
 
 # 各操作的行动点数消耗
 ACTION_AP_COST = {
@@ -712,9 +717,11 @@ UIEvent = Union[
 在 `__init__` 中新增:
 ```python
 self.confession_level: int = 0       # 当前供词层级 (0-4)
-self.confession_progress: float = 0.0  # 当前层级进度 (0.0-1.0)
-self.turn_count: int = 0             # 对话轮次计数
+self.confession_progress: float = 0.0  # 当前层级反馈进度 (0.0-1.0)，不作为硬升级门槛
+self.turn_count: int = 0             # 行动轮次计数：chat / pressure / empathy / present_evidence 都计入
 ```
+
+> v1.5 口径：`confession_progress` 是反馈指标和 UI 节奏条，不是升级硬门槛。真正的升级判定以 `pressure + turn_count + related_evidence` 为准。原因是按当前 `0.02/0.05/0.10/0.15` 速率，若强制要求进度到 1.0，12 轮目标会数学上不可达。若未来想把进度改为硬门槛，必须重新调高进度速率并重新跑平衡模拟。
 
 ### 1.5.3 新增供词判定方法
 
@@ -722,6 +729,8 @@ self.turn_count: int = 0             # 对话轮次计数
 ```python
 def check_confession_upgrade(self, has_evidence: bool = False) -> Optional[int]:
     """检查是否满足供词升级条件，返回升级后的层级或 None。
+
+    v1.5: confession_progress 不参与硬判定，仅用于 UI 反馈。
 
     Args:
         has_evidence: 是否已出示过关联证据
@@ -751,13 +760,17 @@ def check_confession_upgrade(self, has_evidence: bool = False) -> Optional[int]:
     if threshold.get("requires_evidence", False) and not has_evidence:
         return None
 
-    # 所有条件满足，升级
+    # 所有条件满足，升级。升级瞬间视为当前层进度已完成，然后重置下一层进度。
+    self.confession_progress = 1.0
     self.confession_level = next_level
     self.confession_progress = 0.0
     return next_level
 
 def update_confession_progress(self) -> float:
-    """根据当前压力更新供词进度，返回更新后的进度值。"""
+    """根据当前压力更新供词反馈进度，返回更新后的进度值。
+
+    注意：该进度只用于 UI/复盘反馈，不阻塞 check_confession_upgrade。
+    """
     from core.game_config import CONFESSION_PROGRESS_RATE, PRESSURE_SEGMENTS
 
     if self.confession_level >= 4:
@@ -1010,6 +1023,39 @@ def _get_system_message(self) -> dict:
 
 **修改 `core/case_generator.py`**:
 
+### 1.8.0 新增真凶字段（评分与错误惩罚的前置依赖）
+
+在 `CASE_SCHEMA.required` 与顶层 `properties` 中新增：
+
+```python
+"required": [
+    "case_id",
+    "title",
+    "victim",
+    "cause_of_death",
+    "crime_scene",
+    "truth",
+    "culprit_name",
+    "suspects",
+    "evidences",
+    "interrogation_time_limit_sec",
+],
+"properties": {
+    # ... 现有字段 ...
+    "culprit_name": {"type": "string"},  # 真凶姓名，必须匹配 suspects[].name 中的一项
+}
+```
+
+新增业务校验：
+
+```python
+suspect_names = {s["name"] for s in case_dict.get("suspects", [])}
+if case_dict.get("culprit_name") not in suspect_names:
+    raise ValidationError("culprit_name 必须匹配某个 suspects[].name")
+```
+
+> v1.5 口径：`culprit_name` 是真凶的唯一数据源。不要依赖 LLM 在 `truth` 文本里反推真凶，也不要用可选的 `is_culprit` 做评分依据。运行时如需 `is_culprit`，由 `culprit_name` 派生。
+
 在 `CASE_SCHEMA` 的 `evidences.items.properties` 中新增字段：
 
 ```python
@@ -1048,13 +1094,13 @@ def _get_system_message(self) -> dict:
     "type": "array",
     "items": {
         "type": "object",
-        "required": ["name", "background", "knowledge", "forbidden_to_reveal"],
+        "required": ["name", "role", "personality", "knowledge", "forbidden_to_reveal"],
         "properties": {
             "name": {"type": "string"},
-            "background": {"type": "string"},
+            "role": {"type": "string"},
+            "personality": {"type": "string"},
             "knowledge": {"type": "string"},
             "forbidden_to_reveal": {"type": "array", "items": {"type": "string"}},
-            "personality": {"type": "string"},
             "personality_secondary": {"type": "string"},  # v1.3: 主+副性格组合
             # 新增隐藏维度（可选，向后兼容）
             "fear": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
@@ -1066,6 +1112,11 @@ def _get_system_message(self) -> dict:
         "additionalProperties": False,
     },
 },
+```
+
+修改生成提示词，在顶层字段增加：
+```
+"culprit_name": "字符串，真凶姓名，必须等于 suspects 中某个 name。全案只能有一个真凶。",
 ```
 
 修改生成提示词，在 evidences 部分增加：
@@ -1234,6 +1285,8 @@ fear_update = Signal(int, int, str)  # suspect_index, fear_value, reason
 在 `__init__` 中新增:
 
 ```python
+self.pressure: int = DEFAULT_INITIAL_PRESSURE
+self.fear: int = suspect_data.get("fear", DEFAULT_FEAR)
 self.defiance: int = suspect_data.get("defiance", 50)
 self.empathy_susceptibility: int = suspect_data.get("empathy_susceptibility", 50)
 self.deception_skill: int = suspect_data.get("deception_skill", 50)
@@ -1482,7 +1535,7 @@ engine.mistake_log = state.get("mistake_log", [])
 | 压力动态更新 | 验证 `_get_system_message` 使用当前压力值 |
 | 恐惧-压力交互 | 出示错误证据→恐惧下降→后续施压效果减弱 |
 | 多维指标综合计算 | 验证 fear × defiance 综合影响压力增量 |
-| 交互限制耗尽 | 聊天10轮后嫌疑人拒绝，施压1次后不可再施压 |
+| 交互限制耗尽 | 自由聊天12轮后嫌疑人拒绝，施压/共情各2次后不可再使用；第二次效果减半 |
 
 ### 回归测试
 
@@ -1491,6 +1544,56 @@ engine.mistake_log = state.get("mistake_log", [])
 | 现有 `test_engine.py` 通过 | 确保不破坏现有逻辑 |
 | 现有 `test_suspect.py` 通过 | `respond()` 行为不变（除 pressure_change 不再返回） |
 | 现有 `test_web_integration.py` 通过 | UI 事件流正常 |
+
+---
+
+## 1.14 弱模型执行任务包与验收
+
+Phase 1 是后续所有阶段的地基，不建议一次性交给弱模型完整实现。必须拆成以下任务包，每包独立提交、独立测试。
+
+### 任务包拆分
+
+| 包 | 范围 | 允许修改 | 不允许修改 | 验收重点 |
+|----|------|----------|------------|----------|
+| 1a 配置与Schema | 新增/整理配置、`culprit_name`、证据字段、维度默认值 | `core/game_config.py`, `core/case_generator.py`, `tests/test_game_config.py`, `tests/test_case_schema.py` | 不改 `submit_action`、不改 UI | 默认值、Schema校验、旧mock case兼容 |
+| 1b LLM调用隔离 | 抽取 `_call_llm`、动态系统提示词、fake LLM测试入口 | `core/suspect_agent.py`, `tests/test_suspect_agent.py` | 不改胜利判定、不改前端 | pressure 使用当前值，LLM不返回 `pressure_change` |
+| 1c 证据与胜利入口 | `respond_evidence`、程序化压力、`_check_victory`、低层级拦截 | `core/interrogation.py`, `core/suspect_agent.py`, `tests/test_evidence_rework.py`, `tests/test_victory_conditions.py` | 不改 UI 样式、不加工具系统 | 出示证据不自动胜利，层级>=3才可触发秘密胜利 |
+| 1d AP与交互限制 | AP扣减、证据次数、聊天/施压/共情次数 | `core/interrogation.py`, `tests/test_interaction_limits.py` | 不改 LLM prompt | 普通22 AP路径可用，错误证据额外-2 AP |
+| 1e 维度与存档 | fear/defiance等维度、每轮联动、序列化兼容 | `core/suspect_agent.py`, `core/interrogation.py`, `tests/test_hidden_dimensions.py`, `tests/test_save_load.py` | 不改 UI | 旧存档可加载，新字段可恢复 |
+| 1f UI事件 | 供词、恐惧、证据状态、交互限制前端展示 | `schemas/events.py`, `ui/web_bridge.py`, `ui/web_main_window.py`, `ui/web/js/`, `ui/web/css/`, `tests/test_web_integration.py` | 不改核心公式 | 事件字段一致，前端状态更新正确 |
+| 1g 平衡验证 | 42组合模拟、最难/最易边界测试 | `tests/test_balance.py`, `tests/fixtures/` | 不改业务逻辑 | 胜率与AP目标落在v1.5范围 |
+
+### Definition of Ready
+
+| 条件 | 要求 |
+|------|------|
+| 测试夹具 | 已有 mock case 覆盖 `culprit_name`、2-3个嫌疑人、3类证据、至少1条错误证据路径 |
+| LLM隔离 | fake LLM 能返回固定 `{reply, secret_triggered, rebuttal_believable}` |
+| 基线测试 | 修改前 `pytest tests/ -m "not slow and not real_api" -v` 可运行，若失败需记录已有失败 |
+| 任务边界 | 每个任务包有明确目标文件和验收命令，不跨包顺手重构 |
+
+### Definition of Done
+
+| 条件 | 要求 |
+|------|------|
+| 单包测试 | 对应任务包测试全部通过 |
+| 快速回归 | `pytest tests/ -m "not slow and not real_api" -v` 通过 |
+| 数值断言 | `DEFAULT_TOTAL_ACTION_POINTS=22`、初始压力20、证据基值18/12/9、阈值40/55/70/85 均有测试 |
+| 存档兼容 | 旧状态缺字段时使用默认值，不抛异常 |
+| UI一致 | 新增事件在 `schemas/events.py`、WebBridge、前端处理函数中字段名一致 |
+| 无真实API | 测试不调用真实LLM，不要求API key |
+
+### 阶段验收场景
+
+| 场景 | 验收方式 |
+|------|----------|
+| 关键词证据不秒赢 | fake LLM 回复包含 forbidden 关键词，但供词层级<3时不进入胜利 |
+| 正确证据推进 | 出示相关物证后 fear+8、pressure按18基值和soft_factor变化 |
+| 错误证据惩罚 | 出示无关证据后 fear-10、AP额外-2、mistake_log记录 |
+| 供词层级升级 | pressure/turn/evidence满足条件时逐层升级，`confession_progress` 不阻塞升级 |
+| 交互耗尽 | 自由聊天12轮后拒绝；施压/共情各2次后拒绝，第二次效果减半 |
+| 旧存档兼容 | 旧fixture不含新字段仍可加载，并补齐默认值 |
+| 平衡模拟 | 普通难度42组合胜率30%-80%，最难组合不低于20%，最易组合不高于90% |
 
 ---
 
@@ -1542,7 +1645,7 @@ engine.mistake_log = state.get("mistake_log", [])
 | `game_config.py` | 包含Phase 1-4所有配置 | 仅Phase 1配置，后续分阶段添加 | P2：减少早期测试负担 |
 | 嫌疑人维度 | 仅 pressure/confession | 8指标(2可见+6隐藏) | P0：增加个体差异和策略深度 |
 | 施压效果 | 固定公式计算 | fear × defiance 综合系数 | P0：恐惧影响施压，错误操作有惩罚 |
-| 交互限制 | 无限制 | 聊天10轮/人 + 施压1次/人 + 共情1次/人 | P0：避免无限试错 |
+| 交互限制 | 无限制 | 自由聊天12轮/人 + 施压2次/人 + 共情2次/人（第二次减半） | P0：避免无限试错，同时保留基本容错 |
 | 错误操作 | 无惩罚 | fear-10 + mistake_log 记录 | P1：增加策略博弈 |
 | 隐藏维度 | 初始化后不变 | 全维度动态变化+维度联动 | P0：维度间正/负反馈循环 |
 | 性格系统 | 5种离散类型 | 7种+主副组合(0.7+0.3加权) | P1：更丰富心理画像 |

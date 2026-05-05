@@ -1,7 +1,7 @@
-# Phase 2：审讯深度 — 反驳机制 + 压力增强 + 证据链 + 时间-压力动态 + 错误惩罚 + 反扑机制（优化版 v1.3）
+# Phase 2：审讯深度 — 反驳机制 + 压力增强 + 证据链 + 每轮压力动态 + 错误惩罚 + 反扑机制（优化版 v1.3）
 
 > **评审变更**：修复P0主动开口线程阻塞（改为轮次触发+异步）、反驳增加程序化兜底、证据链奖励配置化、高压行为指令动态注入  
-> **v1.2 变更**：新增时间-压力双向动态关系、错误惩罚机制（mistake_log评分联动）、维度指标对反驳/共情的影响  
+> **v1.2 变更**：新增每轮压力双向动态关系、错误惩罚机制（mistake_log评分联动）、维度指标对反驳/共情的影响
 > **v1.3 变更**：反扑机制5种行为、维度动态变化触发器（反驳结果→deception/credibility变化）、共情→empathy正反馈循环，详见 [`suspect-dimensions.md`](suspect-dimensions.md)
 
 ## 前置依赖
@@ -21,7 +21,7 @@ Phase 1 完成（供词层级、证据系统重构、统一胜利入口 `_check_
 | 2.3 | 压力程序化效果 | `core/suspect_agent.py`, `core/interrogation.py` | 中 |
 | 2.4 | 证据链机制 | `core/interrogation.py`, `core/case_generator.py`, `core/game_config.py` | 小 |
 | 2.5 | 嫌疑人主动开口 | `core/interrogation.py`, `ui/web_main_window.py` | 中 |
-| 2.6 | 时间-压力双向动态 | `core/interrogation.py`, `core/game_config.py` | 中 |
+| 2.6 | 每轮压力双向动态 | `core/interrogation.py`, `core/game_config.py` | 中 |
 | 2.7 | 错误惩罚机制 | `core/interrogation.py`, `schemas/events.py`, `ui/web/` | 中 |
 | 2.8 | 反扑机制 | `core/interrogation.py`, `schemas/events.py`, `ui/web/` | 中 |
 | 2.9 | 测试 | `tests/` | 中 |
@@ -70,8 +70,8 @@ rebuttal_believable = result.get("rebuttal_believable", False)
 # 程序化兜底：高压时反驳可信度强制衰减
 if rebuttal and rebuttal_believable:
     # deception_skill 影响反驳阈值：欺骗技巧高的人更难被程序化否决
-    effective_hard_threshold = REBUTTAL_DECAY_CONFIG["pressure_threshold_hard"] - int(suspect.deception_skill * 0.2)
-    effective_soft_threshold = REBUTTAL_DECAY_CONFIG["pressure_threshold_soft"] - int(suspect.deception_skill * 0.1)
+    effective_hard_threshold = REBUTTAL_DECAY_CONFIG["pressure_threshold_hard"] + int((suspect.deception_skill - 50) * 0.2)
+    effective_soft_threshold = REBUTTAL_DECAY_CONFIG["pressure_threshold_soft"] + int((suspect.deception_skill - 50) * 0.1)
 
     if suspect.pressure > effective_hard_threshold:
         rebuttal_believable = False
@@ -543,10 +543,7 @@ if self.action_points_remaining <= 0 and self.state == "interrogating":
 def _check_mistake(self, action: str, suspect, result: dict) -> Optional[dict]:
     """检查操作是否为错误操作，返回错误记录或 None。"""
     from core.game_config import AP_PENALTY
-    is_culprit = suspect.name in [
-        s.get("name") for s in self.case.get("suspects", [])
-        if s.get("is_culprit", False)
-    ]
+    is_culprit = suspect.name == self.case.get("culprit_name")
 
     if action == "present_evidence":
         # 出示错误证据
@@ -707,7 +704,7 @@ self._consecutive_idle_turns: int = 0
 | 反驳成功不增加压力 | 模拟 believable=True 的反驳，验证压力不变 |
 | 反驳失败正常增加压力 | 模拟 believable=False 的反驳，验证压力增加 |
 | 反驳程序化兜底 | 模拟 pressure=85 + believable=True，验证程序覆盖为 False |
-| deception_skill 影响反驳 | 模拟 deception_skill=80，验证反驳阈值降低 |
+| deception_skill 影响反驳 | 模拟 deception_skill=80，验证反驳阈值提高；模拟 deception_skill=20，验证阈值降低 |
 | credibility 影响反驳 | 模拟 credibility>70，验证反驳阈值放宽 |
 | 反驳结果→deception变化 | 成功+1，失败-3 |
 | 反驳结果→credibility变化 | 成功+10，失败-5 |
@@ -716,19 +713,58 @@ self._consecutive_idle_turns: int = 0
 | 主动开口异步执行 | 验证主动开口不阻塞 UI 线程 |
 | 动态提示词 | 验证不同压力下系统提示词内容不同 |
 | credibility 序列化 | 验证存档/读档后可信度正确恢复 |
-| 时间-压力低段衰减 | 压力=30，等待5秒，验证压力下降约2.5 |
-| 时间-压力高段增长 | 压力=80，等待5秒，验证压力增长约1.5 |
-| 时间-压力中间段稳定 | 压力=50，等待5秒，验证压力不变 |
+| 每轮压力低段衰减 | 压力=29，连续5轮操作后验证压力每轮-1，且受 floor=15 保护 |
+| 每轮压力高段增长 | 压力=80，连续5轮操作后验证压力每轮+1，且不会再依赖秒级 tick |
+| 每轮压力中间段稳定 | 压力=50，连续5轮操作后验证压力不变 |
 | 共情效果 | 共情操作后恐惧下降、供词进度增加、empathy+2 |
 | 共情→empathy正反馈 | 共情成功后empathy_susceptibility+2 |
 | 施压→empathy负反馈 | 施压成功后empathy_susceptibility-2 |
-| 错误证据惩罚 | 出示错误证据→恐惧-10、时间-15s、mistake_log记录 |
-| 无辜崩溃惩罚 | 无辜者confession_level=4→时间-30s、评分-20 |
+| 错误证据惩罚 | 出示错误证据→恐惧-10、额外-2 AP、mistake_log记录 |
+| 无辜崩溃惩罚 | 无辜者confession_level=4→额外-3 AP、评分严重扣分/结果封顶 |
 | 反扑：挑衅触发 | fear<15时触发，pressure-2/轮, defiance+2/轮 |
 | 反扑：反击质问 | 连续2次反驳成功触发，fear+10, defiance+3 |
 | 反扑：试探玩家 | pressure>40且fear<20触发 |
 | 反扑：恢复镇定 | 连续3轮空闲触发，defiance+3, fear-5 |
 | 每轮维度联动 | pressure>60→defiance-1, fear>70→多维度变化 |
+
+---
+
+## 2.10 弱模型执行任务包与验收
+
+Phase 2 的风险在于多个机制会同时改变 pressure、fear、deception、credibility 和 AP。弱模型执行时必须逐包实现，禁止一次性把反驳、反扑、错误惩罚和主动开口混在同一个改动里。
+
+### 任务包拆分
+
+| 包 | 范围 | 允许修改 | 验收重点 |
+|----|------|----------|----------|
+| 2a 反驳兜底 | `rebuttal_believable`、deception/credibility阈值、反驳事件 | `core/suspect_agent.py`, `core/interrogation.py`, `schemas/events.py`, `tests/test_rebuttal.py` | 高deception提高阈值，pressure>hard阈值强制失败 |
+| 2b 证据链 | `chain_with` Schema、chain_bonus、生成提示词 | `core/case_generator.py`, `core/interrogation.py`, `tests/test_evidence_chain.py` | 已出示关联证据时才加bonus，重复出示不叠加 |
+| 2c 每轮动态 | `_apply_per_turn_dynamics`、pressure/fear自然变化、维度联动 | `core/interrogation.py`, `tests/test_per_turn_dynamics.py` | 不依赖秒级tick，低/中/高三段边界正确 |
+| 2d 错误惩罚 | `_check_mistake`、AP_PENALTY、MistakeEvent、UI提示 | `core/interrogation.py`, `schemas/events.py`, `ui/web/`, `tests/test_mistakes.py` | 使用 `culprit_name` 判断真凶，错误路径扣AP并记录 |
+| 2e 主动开口 | 每5轮检查、异步调用、主动开口事件 | `core/interrogation.py`, `ui/web_main_window.py`, `tests/test_proactive_speech.py` | 不阻塞UI，不在tick里按秒触发 |
+| 2f 反扑行为 | 5类反扑优先级、冷却、计数器序列化 | `core/interrogation.py`, `tests/test_proactive.py`, `tests/test_save_load.py` | 同轮只触发一种反扑，冷却期生效 |
+
+### Definition of Done
+
+| 条件 | 要求 |
+|------|------|
+| 反驳可靠性 | fake LLM 给出 believable=True 时，程序化兜底仍能覆盖明显不可信反驳 |
+| 数值边界 | pressure=29/50/80 三段每轮动态有边界测试 |
+| 错误来源 | 所有“是否真凶”判断只用 `case["culprit_name"]` |
+| 事件一致 | RebuttalEvent、MistakeEvent、ProactiveEvent 字段在 schema、bridge、前端中一致 |
+| 非阻塞 | 主动开口和LLM调用必须继续走现有异步路径，不回到 `tick()` 阻塞UI |
+| 回归 | Phase 1 的证据、AP、供词、存档测试仍全部通过 |
+
+### 阶段验收场景
+
+| 场景 | 验收方式 |
+|------|----------|
+| 高欺骗嫌疑人更难压制 | deception=80 时 hard threshold 高于 deception=20 |
+| 反驳失败推进审讯 | believable=False 后 pressure增加、deception/credibility下降 |
+| 证据链奖励可控 | chain_with 命中一次增加固定bonus，不因重复出示无限堆叠 |
+| 错误施压 | 对非 `culprit_name` 嫌疑人施压，fear-5、额外-1 AP、mistake_log记录 |
+| 无辜崩溃 | 非真凶 confession_level=4 时不算win，触发严重惩罚 |
+| 反扑优先级 | fear<15 与连续反驳同时满足时，按文档优先级只触发挑衅 |
 
 ---
 
@@ -743,7 +779,7 @@ self._consecutive_idle_turns: int = 0
 | 证据链奖励 | 硬编码`chain_bonus=10` | `game_config.CHAIN_BONUS` | P2：配置化 |
 | 压力行为指令 | 通用描述 | 4段压力段动态注入 | 增强：细化LLM行为 |
 | 压力动态 | 静态，不操作不变 | 低压力衰减+高压力增长+中间稳定 | P1：增加博弈深度 |
-| 错误操作 | 无惩罚 | mistake_log + 恐惧/时间/评分惩罚 | P1：增加策略博弈 |
+| 错误操作 | 无惩罚 | mistake_log + 恐惧/AP/评分惩罚 | P1：增加策略博弈 |
 | 共情操作 | 无 | 新增共情类型，empathy动态正反馈 | 增强：增加策略选择 |
 | 反扑机制 | 无 | 5种反扑行为（挑衅/反击/试探/得意/恢复） | P0：嫌疑人主动博弈 |
 

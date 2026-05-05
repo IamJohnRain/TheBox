@@ -165,6 +165,16 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
         total += scores.get(dim, 0) * config["weight"]
     total = int(total)
 
+    # 结果封顶（v1.5）：避免失败局因行为分/LLM分较高而拿到高评级。
+    # win: 不封顶；partial: 最高 B；fail: 最高 C；无辜崩溃: 最高 C-。
+    outcome = session_data.get("outcome", "win" if confession_level >= 4 else "fail")
+    if outcome == "partial":
+        total = min(total, 74)
+    elif outcome == "fail":
+        total = min(total, 59)
+    if innocent_breakdown:
+        total = min(total, 49)
+
     # ── 评级 ──
     grade = "D"
     for g, threshold in GRADE_THRESHOLDS:
@@ -270,6 +280,19 @@ def _handle_ending(self, state_event):
            self.engine._find_evidence(eid).get("related_suspect") == suspect.name
     )
     total_evidence_presented = len(self.engine.presented_evidence_ids)
+    pressure_count = (
+        PRESSURE_USES_PER_SUSPECT
+        - self.engine.pressure_uses_remaining[self.engine.current_suspect_index]
+    )
+    wrong_pressure_count = sum(
+        1 for m in self.engine.mistake_log
+        if m.get("type") == "wrong_pressure" and m.get("suspect_name") == suspect.name
+    )
+    outcome = (
+        "win" if state_event["new_state"] == "breakdown"
+        else "partial" if suspect.confession_level >= 2 or total_evidence_presented > 0
+        else "fail"
+    )
 
     score_data = calculate_score({
         "truth": self.engine.case.get("truth", ""),
@@ -284,9 +307,9 @@ def _handle_ending(self, state_event):
         "mistake_log": self.engine.mistake_log,
         "correct_evidence_count": correct_evidence_count,
         "total_evidence_presented": total_evidence_presented,
-        "pressure_count": self.engine.pressure_uses_remaining and
-            (PRESSURE_USES_PER_SUSPECT - self.engine.pressure_uses_remaining[self.engine.current_suspect_index]),
-        "pressure_on_culprit": 0,  # 需要从mistake_log反算
+        "pressure_count": pressure_count,
+        "pressure_on_culprit": max(0, pressure_count - wrong_pressure_count),
+        "outcome": outcome,
     })
 
     # 发送评分数据到前端
@@ -378,10 +401,10 @@ def generate_case(background: str, difficulty: str = "easy", max_retries: int = 
 
 ```python
 difficulty_constraints = {
-    "easy": "生成2个嫌疑人，3-4个证据，3个以上forbidden_to_reveal关键词，行动点数25。",
-    "normal": "生成2-3个嫌疑人，3-4个证据，2个forbidden_to_reveal关键词，行动点数20。",
-    "hard": "生成3-4个嫌疑人，4-5个证据，1-2个forbidden_to_reveal关键词，行动点数18。嫌疑人的反驳能力更强。",
-    "nightmare": "生成4个以上嫌疑人，5-6个证据，仅1个forbidden_to_reveal关键词，行动点数15。嫌疑人非常善于隐瞒。",
+    "easy": "生成2个嫌疑人，3-4个证据，3个以上forbidden_to_reveal关键词，行动点数26。",
+    "normal": "生成2-3个嫌疑人，3-4个证据，2个forbidden_to_reveal关键词，行动点数22。",
+    "hard": "生成3-4个嫌疑人，4-5个证据，1-2个forbidden_to_reveal关键词，行动点数19。嫌疑人的反驳能力更强。",
+    "nightmare": "生成4个以上嫌疑人，5-6个证据，仅1个forbidden_to_reveal关键词，行动点数16。嫌疑人非常善于隐瞒。",
 }
 ```
 
@@ -393,10 +416,10 @@ difficulty_constraints = {
 # core/game_config.py — Phase 4 添加
 
 DIFFICULTY_PRESETS: Dict[str, Dict[str, Any]] = {
-    "easy":      {"suspects": 2, "total_ap": 25, "evidence_uses": 4, "keywords": 3, "unlock_level": 1},
-    "normal":    {"suspects": "2-3", "total_ap": 20, "evidence_uses": 4, "keywords": 2, "unlock_level": 5},
-    "hard":      {"suspects": "3-4", "total_ap": 18, "evidence_uses": 4, "keywords": 2, "unlock_level": 10},
-    "nightmare": {"suspects": "4+", "total_ap": 15, "evidence_uses": 3, "keywords": 1, "unlock_level": 15},
+    "easy":      {"suspects": 2, "total_ap": 26, "evidence_uses": 4, "keywords": 3, "unlock_level": 1},
+    "normal":    {"suspects": "2-3", "total_ap": 22, "evidence_uses": 4, "keywords": 2, "unlock_level": 5},
+    "hard":      {"suspects": "3-4", "total_ap": 19, "evidence_uses": 4, "keywords": 2, "unlock_level": 10},
+    "nightmare": {"suspects": "4+", "total_ap": 16, "evidence_uses": 3, "keywords": 1, "unlock_level": 15},
 }
 ```
 
@@ -405,10 +428,10 @@ DIFFICULTY_PRESETS: Dict[str, Dict[str, Any]] = {
 - **Lv.1-4**：简单难度，熟悉基础机制（约 5-10 局，30-60分钟）
 - **Lv.5-9**：普通难度，引入反驳机制（约 10-15 局，累计 1.5-2.5小时）
 - **Lv.10-14**：困难难度，完整策略体验（约 15-25 局，累计 3-5小时）
-- **Lv.15+**：噩梦难度，挑战极限（约 20-30 局，累计 5-8小时）
+- **Lv.15+**：噩梦难度，挑战极限（约 30-50 局，累计 5-8小时）
 
 > 此节奏基于每局约5分钟、经验获取约40-65点的估算。实际节奏需根据试玩数据调整。
-> 经验曲线验证：Lv.10约需1700exp（约25-40局，2-3小时）；Lv.20约需7100exp（约110-180局，9-15小时）。
+> 经验曲线验证（v1.5）：Lv.10约需880exp（约14-22局，1-2小时）；Lv.15约需1980exp（约30-50局，3-5小时）；Lv.20约需3580exp（约55-90局，5-8小时）。
 
 ---
 
@@ -462,6 +485,44 @@ function updateDifficultyOptions(playerLevel) {
 | memory_summary 截断 | 验证超长对话正确截断 |
 | 行为维度权重 | 验证8个维度权重之和为1.0 |
 | mistake_log 联动 | 验证 mistake_log 数据正确传入评分 |
+
+---
+
+## 4.7 弱模型执行任务包与验收
+
+Phase 4 应优先写纯函数评分，再接 UI 和经验结算。不要让弱模型同时修改评分公式、LLM调用、难度生成和前端面板。
+
+### 任务包拆分
+
+| 包 | 范围 | 允许修改 | 验收重点 |
+|----|------|----------|----------|
+| 4a 规则评分 | `core/scoring.py`、行为/结果/策略分数、结果封顶 | `core/scoring.py`, `tests/test_scoring.py` | 无LLM也能返回完整评分，partial/fail封顶正确 |
+| 4b LLM评分降级 | LLM summary输入截断、异常降级50分 | `core/scoring.py`, `tests/test_scoring_llm.py` | 不因网络/API失败阻塞结算 |
+| 4c 经验结算 | 评分转经验、PlayerProfile更新、best_grade | `core/player.py`, `core/db.py`, `tests/test_experience.py` | S>A>B>C>D比较正确，升级幂等 |
+| 4d 难度系统 | 难度参数、解锁规则、case生成约束 | `core/game_config.py`, `core/case_generator.py`, `tests/test_difficulty.py` | normal=22 AP，hard=19，nightmare=16 |
+| 4e 评分UI | 评分面板、分组展示、WebBridge信号 | `ui/web/`, `ui/web_bridge.py`, `ui/web_main_window.py`, `tests/test_score_ui.py` | 前端展示总分、评级、分项和封顶原因 |
+
+### Definition of Done
+
+| 条件 | 要求 |
+|------|------|
+| 纯规则可测 | 不依赖真实LLM即可完成评分 |
+| 分数封顶 | win不封顶，partial≤74，fail≤59，无辜崩溃≤49 |
+| 行为统计 | evidence_usage、pressure_precision、mistake_penalty 都基于正确分母 |
+| 经验一致 | 经验曲线与 Phase 3b `EXPERIENCE_CURVE` 一致 |
+| 难度一致 | 难度AP和证据次数与 v1.5 基线一致 |
+| UI可解释 | 评分面板说明每个扣分/封顶原因，便于复盘 |
+
+### 阶段验收场景
+
+| 场景 | 验收方式 |
+|------|----------|
+| 失败高行为分 | 构造fail但高证据/LLM分，最终总分仍≤59 |
+| partial封顶 | confession_level=2且有证据，最终总分≤74 |
+| 无辜崩溃 | mistake_log含 innocent_breakdown，最终总分≤49 |
+| LLM不可用 | 模拟异常，评分返回默认LLM分且不抛出 |
+| 难度生成 | easy/normal/hard/nightmare 分别生成对应AP、证据数和嫌疑人数 |
+| 经验升级 | 多局评分累计后正确升级并解锁难度 |
 
 ---
 

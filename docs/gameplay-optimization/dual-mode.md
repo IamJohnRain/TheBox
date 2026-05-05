@@ -293,9 +293,10 @@ def get_narrative(self, result: ChapterResult) -> str:
         "cause_of_death": "...",
         "crime_scene": "...",
         "truth": "...",
+        "culprit_name": "张某",
         "suspects": [...],
         "evidences": [...],
-        "total_action_points": 20
+        "total_action_points": 22
       },
       "merge_to": null,
       "branch": {
@@ -416,6 +417,7 @@ class ChapterResult(TypedDict):
     evidence_count: int         # 已出示证据数
     ap_remaining_pct: float     # 剩余行动点数百分比
     suspect_name: str
+    culprit_name: str           # 来自 case_data.culprit_name，作为真凶唯一来源
     verdict_reason: str
 ```
 
@@ -426,9 +428,11 @@ def evaluate_chapter(engine: InterrogationEngine) -> ChapterResult:
     """基于引擎状态评估审讯结果。"""
     suspect = engine.suspects[engine.current_suspect_index]
     total_ap = engine.total_action_points
+    culprit_name = engine.case.get("culprit_name", "")
+    is_culprit = suspect.name == culprit_name
 
-    # 三级判定
-    if engine.state == "breakdown" or suspect.confession_level >= 4:
+    # 三级判定：只有真凶达到崩溃/层级4才算win；无辜者崩溃不能推进为胜利分支。
+    if is_culprit and (engine.state == "breakdown" or suspect.confession_level >= 4):
         result = "win"
     elif suspect.confession_level >= 2 or (
         engine.state == "verdict" and len(engine.presented_evidence_ids) > 0
@@ -443,6 +447,7 @@ def evaluate_chapter(engine: InterrogationEngine) -> ChapterResult:
         evidence_count=len(engine.presented_evidence_ids),
         ap_remaining_pct=round(engine.action_points_remaining / max(total_ap, 1), 2),
         suspect_name=suspect.name,
+        culprit_name=culprit_name,
         verdict_reason=f"供词层级{suspect.confession_level}，状态{engine.state}",
     )
 ```
@@ -451,7 +456,7 @@ def evaluate_chapter(engine: InterrogationEngine) -> ChapterResult:
 
 | 结果 | 条件 | 叙事 |
 |------|------|------|
-| `win` | `breakdown` 或供词层级 >= 4 | `closing_win` |
+| `win` | `culprit_name` 对应真凶达到 `breakdown` 或供词层级 >= 4 | `closing_win` |
 | `partial` | 供词层级 >= 2，或超时但有出示过证据 | `closing_partial` |
 | `fail` | 超时且无证据出示，供词层级 < 2 | `closing_fail` |
 
@@ -840,3 +845,44 @@ Phase 1 (Part A) ─┬─→ Phase 2+ (Part A，可并行)
 | 7 | 叙事过场 UI、章节进度更新、存档恢复剧情进度 |
 | 8 | 5章完整剧情流程、分支覆盖、结局可达性、跨章节证据传递 |
 | 9 | 约束式生成器质量、generated章节 CASE_SCHEMA 合规、15章完整通关 |
+
+---
+
+## 13. 弱模型执行任务包与验收
+
+双模式系统可以和 Part A 后续阶段并行，但必须在 Phase 1 验收后启动。弱模型执行时优先实现纯 Python 的 GameSession/StoryEngine，再做 UI，最后写剧情内容和生成器。
+
+### 任务包拆分
+
+| 包 | 范围 | 允许修改 | 验收重点 |
+|----|------|----------|----------|
+| 5a GameSession骨架 | 模式切换、自定义模式兼容、engine属性转发 | `core/game_session.py`, `ui/web_main_window.py`, `tests/test_game_session.py` | 自定义模式行为不变 |
+| 5b 主菜单UI | 模式选择、剧情入口占位、自定义入口 | `ui/web/`, `ui/web_bridge.py`, `tests/test_menu_ui.py` | 主菜单不破坏现有案件生成 |
+| 6a Story schema | `schemas/story.py`、StoryLoader校验、fixture故事 | `schemas/story.py`, `core/story_loader.py`, `tests/test_story_loader.py` | 分支next、merge_to、case_data均校验 |
+| 6b StoryEngine | 章节开始、完成、分支匹配、变量传递 | `core/story_engine.py`, `tests/test_story_engine.py` | 不使用 eval，声明式条件按顺序匹配 |
+| 6c ChapterResult | 结果评估、`culprit_name`胜利判断、AP百分比 | `core/game_session.py`, `schemas/story.py`, `tests/test_chapter_result.py` | 无辜崩溃不能返回win |
+| 7a 剧情UI | 叙事过场、章节进度、结局页 | `ui/web/js/story.js`, `ui/web/css/`, `ui/web_bridge.py`, `tests/test_story_ui.py` | 章节开始/完成事件字段一致 |
+| 8a MVP脚本 | 5章 scripted 剧情、分支覆盖、结局可达 | `stories/missing_father.json`, `tests/test_story_mvp.py` | 每章case_data符合CASE_SCHEMA |
+| 9a 约束生成器 | generated章节、case_constraints、生成结果缓存 | `core/case_generator.py`, `tests/test_story_generation.py` | 生成结果必须含 `culprit_name` 且Schema合规 |
+
+### Definition of Done
+
+| 条件 | 要求 |
+|------|------|
+| 自定义模式无回归 | 不选择剧情时，现有自定义案件流程完全可用 |
+| 声明式分支 | 分支条件只用 JSON 字段，不使用 `eval()` 或 Python表达式 |
+| 真凶判断 | ChapterResult 的 `win` 只允许 `culprit_name` 对应嫌疑人崩溃 |
+| 存档恢复 | story_progress、current_chapter_id、completed_chapters、carried_evidence 可恢复 |
+| 脚本合规 | scripted章节全部通过 CASE_SCHEMA 和 STORY_SCHEMA |
+| 生成隔离 | Phase 5-8 不依赖 generated；Phase 9 才接入真实生成器 |
+
+### 阶段验收场景
+
+| 场景 | 验收方式 |
+|------|----------|
+| 自定义模式回归 | 从主菜单进入自定义模式，生成/加载/审讯流程和原先一致 |
+| 剧情章节推进 | ch01 win/partial/fail 三条路径进入不同 next |
+| 分支兜底 | 条件都不满足时命中最后一个只有 `next` 的兜底分支 |
+| 跨章节证据 | carry_evidence 合并进下一章，但不参与 forbidden_to_reveal 胜利触发 |
+| 存档恢复 | 中途退出后恢复到正确章节和变量 |
+| 5章MVP通关 | 三种结果路径至少各覆盖一次，所有结局可达 |
