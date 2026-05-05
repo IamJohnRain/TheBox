@@ -172,6 +172,7 @@ class WebMainWindow(QMainWindow):
         self._test_worker: Optional[TestConnectionWorker] = None
         self._case_gen_worker: Optional[CaseGenerateWorker] = None
         self._review_worker: Optional[ReviewWorker] = None
+        self._case_gen_cancelled: bool = False
 
         self.web_view = QWebEngineView()
 
@@ -637,6 +638,7 @@ class WebMainWindow(QMainWindow):
             self.bridge.case_generation_error.emit('{"type":"empty","raw":"背景故事不能为空"}')
             return
 
+        self._case_gen_cancelled = False
         self._case_gen_worker = CaseGenerateWorker(
             background, model.strip() or None, safe_mode=safe_mode
         )
@@ -651,13 +653,28 @@ class WebMainWindow(QMainWindow):
 
     def _on_case_generated(self, case_dict):
         """案件生成成功。"""
+        if self._case_gen_cancelled:
+            logger.info("案件已生成但用户已取消，丢弃结果")
+            self._case_gen_worker = None
+            return
         logger.info(f"案件生成成功: {case_dict.get('title', '未知')}")
         self.bridge.case_generation_complete.emit(case_dict)
         self._case_gen_worker = None
-        QTimer.singleShot(350, lambda: self.load_case(case_dict))
+        QTimer.singleShot(350, lambda: self._deferred_load_case(case_dict))
+
+    def _deferred_load_case(self, case_dict):
+        """延迟加载案件，检查取消标志。"""
+        if self._case_gen_cancelled:
+            logger.info("延迟加载时用户已取消，丢弃案件结果")
+            return
+        self.load_case(case_dict)
 
     def _on_case_generation_error(self, error_msg):
         """案件生成失败。"""
+        if self._case_gen_cancelled:
+            logger.info("案件生成出错但用户已取消，丢弃错误")
+            self._case_gen_worker = None
+            return
         if error_msg.startswith("CONTENT_FILTER:"):
             raw = error_msg[len("CONTENT_FILTER:"):]
             error_json = '{"type":"content_filter","raw":' + json.dumps(raw, ensure_ascii=False) + '}'
@@ -678,6 +695,7 @@ class WebMainWindow(QMainWindow):
 
     def _on_cancel_case_generation(self):
         """取消案件生成。"""
+        self._case_gen_cancelled = True
         if self._case_gen_worker and self._case_gen_worker.isRunning():
             self._case_gen_worker.interrupt()
             self._case_gen_worker.wait(2000)

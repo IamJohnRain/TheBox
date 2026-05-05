@@ -438,22 +438,20 @@ class TestFix6CaseGenerationAtomic:
     """Fix 6: _on_case_generated 不再使用 QTimer.singleShot。"""
 
     def test_on_case_generated_no_qtimer_singleshot(self):
-        """_on_case_generated 方法中不使用 QTimer.singleShot。"""
+        """_on_case_generated 方法中使用 _deferred_load_case 延迟加载。"""
         content = _get_py_content("web_main_window.py")
-        # 找到 _on_case_generated 方法
         method_pos = content.find("def _on_case_generated")
         assert method_pos > 0, "未找到 _on_case_generated 方法"
-        # 提取方法体（到下一个 def 或文件结尾）
         next_def = content.find("\n    def ", method_pos + 1)
         if next_def < 0:
             next_def = len(content)
         method_body = content[method_pos:next_def]
-        assert "QTimer.singleShot" not in method_body, (
-            "_on_case_generated 不应使用 QTimer.singleShot"
+        assert "_deferred_load_case" in method_body, (
+            "_on_case_generated 应调用 _deferred_load_case 以支持取消检查"
         )
 
     def test_on_case_generated_calls_load_case_directly(self):
-        """_on_case_generated 方法直接调用 self.load_case()。"""
+        """_on_case_generated 方法通过 _deferred_load_case 间接调用 self.load_case()。"""
         content = _get_py_content("web_main_window.py")
         method_pos = content.find("def _on_case_generated")
         assert method_pos > 0, "未找到 _on_case_generated 方法"
@@ -461,8 +459,14 @@ class TestFix6CaseGenerationAtomic:
         if next_def < 0:
             next_def = len(content)
         method_body = content[method_pos:next_def]
-        assert "self.load_case(case_dict)" in method_body, (
-            "_on_case_generated 应直接调用 self.load_case(case_dict)"
+        assert "_deferred_load_case" in method_body, (
+            "_on_case_generated 应调用 _deferred_load_case"
+        )
+        deferred_pos = content.find("def _deferred_load_case")
+        assert deferred_pos > 0, "未找到 _deferred_load_case 方法"
+        deferred_body = content[deferred_pos:deferred_pos + 500]
+        assert "load_case" in deferred_body, (
+            "_deferred_load_case 应调用 self.load_case"
         )
 
     def test_on_case_generated_emits_completion_signal(self):
@@ -475,18 +479,21 @@ class TestFix6CaseGenerationAtomic:
         )
 
     def test_no_qtimer_singleshot_for_case_loading(self):
-        """整个 web_main_window.py 中不使用 QTimer.singleShot 加载案件。"""
+        """QTimer.singleShot 仅用于 _deferred_load_case（带取消检查）。"""
         content = _get_py_content("web_main_window.py")
-        # 搜索所有 QTimer.singleShot 调用
         singleshot_matches = list(re.finditer(r"QTimer\.singleShot", content))
         for match in singleshot_matches:
-            # 检查附近上下文是否有 load_case
             start = max(0, match.start() - 200)
             end = min(len(content), match.end() + 200)
             context = content[start:end]
-            assert "load_case" not in context, (
-                f"QTimer.singleShot 不应用于延迟加载案件 (位置: {match.start()})"
-            )
+            if "_deferred_load_case" in context:
+                assert "_case_gen_cancelled" in content[content.find("def _deferred_load_case"):content.find("def _deferred_load_case") + 500], (
+                    "_deferred_load_case 必须检查 _case_gen_cancelled 标志"
+                )
+            else:
+                assert "load_case" not in context, (
+                    f"QTimer.singleShot 不应用于直接延迟加载案件 (位置: {match.start()})"
+                )
 
     def test_on_case_generated_emits_before_load(self):
         """_on_case_generated 中 case_generation_complete 在 load_case 之前。"""
@@ -497,11 +504,11 @@ class TestFix6CaseGenerationAtomic:
             next_def = len(content)
         method_body = content[method_pos:next_def]
         complete_pos = method_body.find("case_generation_complete")
-        load_pos = method_body.find("load_case")
+        load_pos = method_body.find("_deferred_load_case")
         assert complete_pos > 0, "未找到 case_generation_complete 信号"
-        assert load_pos > 0, "未找到 load_case 调用"
+        assert load_pos > 0, "未找到 _deferred_load_case 调用"
         assert complete_pos < load_pos, (
-            "case_generation_complete 信号应在 load_case 之前发射"
+            "case_generation_complete 信号应在 _deferred_load_case 之前发射"
         )
 
 

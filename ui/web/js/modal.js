@@ -13,6 +13,9 @@ class ModalManager {
         this.closeBtn = document.getElementById('modal-close');
         this._confirmCallback = null;
         this._isGenerating = false;
+        this._isShowingGenCancelConfirm = false;
+        this._genCompletedDuringConfirm = false;
+        this._genErrorDuringConfirm = null;
         this._bindEvents();
     }
 
@@ -27,20 +30,31 @@ class ModalManager {
 
     _bindEvents() {
         if (this.closeBtn) {
-            this.closeBtn.addEventListener('click', () => this._requestHide());
+            this.closeBtn.addEventListener('click', () => {
+                if (this._isShowingGenCancelConfirm) {
+                    this._onGenCancelConfirmCancel();
+                } else {
+                    this._requestHide();
+                }
+            });
         }
 
         if (this.backdrop) {
             this.backdrop.addEventListener('click', () => {
-                if (this._isGenerating) return;
+                if (this._isGenerating || this._isShowingGenCancelConfirm) return;
                 this.hide();
             });
         }
 
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this._isVisible()) {
-                if (this._isGenerating) return;
-                this.hide();
+                if (this._isShowingGenCancelConfirm) {
+                    this._onGenCancelConfirmCancel();
+                } else if (this._isGenerating) {
+                    return;
+                } else {
+                    this.hide();
+                }
             }
         });
     }
@@ -58,6 +72,16 @@ class ModalManager {
         this._savedGenBody = this.bodyEl ? this.bodyEl.innerHTML : '';
         this._savedGenFooterClass = this.footerEl ? this.footerEl.className : '';
 
+        if (this._genTypewriterTimer) {
+            clearInterval(this._genTypewriterTimer);
+            this._genTypewriterTimer = null;
+        }
+        this._clearGenSubStepTimer();
+
+        this._isShowingGenCancelConfirm = true;
+        this._genCompletedDuringConfirm = false;
+        this._genErrorDuringConfirm = null;
+
         if (this.titleEl) this.titleEl.textContent = '确认取消生成？';
         if (this.bodyEl) this.bodyEl.innerHTML = '<p>案件正在生成中，确定要取消吗？</p>';
 
@@ -67,10 +91,9 @@ class ModalManager {
 
             const confirmBtn = document.createElement('button');
             confirmBtn.className = 'modal-btn modal-btn-primary';
-            confirmBtn.textContent = '确认';
+            confirmBtn.textContent = '确定';
             confirmBtn.addEventListener('click', () => {
-                this._cancelGeneration();
-                this.hide();
+                this._onGenCancelConfirmOK();
             });
             this.footerEl.appendChild(confirmBtn);
 
@@ -78,19 +101,64 @@ class ModalManager {
             cancelBtn.className = 'modal-btn modal-btn-secondary';
             cancelBtn.textContent = '取消';
             cancelBtn.addEventListener('click', () => {
-                this._restoreGenContent();
+                this._onGenCancelConfirmCancel();
             });
             this.footerEl.appendChild(cancelBtn);
         }
+    }
+
+    _onGenCancelConfirmOK() {
+        this._isShowingGenCancelConfirm = false;
+        this._cancelGeneration();
+        this.hide();
+    }
+
+    _onGenCancelConfirmCancel() {
+        this._isShowingGenCancelConfirm = false;
+
+        if (this._genCompletedDuringConfirm || this._genErrorDuringConfirm) {
+            if (window.bridge) {
+                window.bridge.cancelCaseGeneration();
+            }
+            this._isGenerating = false;
+            this._genCompletedDuringConfirm = false;
+            this._genErrorDuringConfirm = null;
+            this.hide();
+            return;
+        }
+
+        this._restoreGenContent();
     }
 
     _restoreGenContent() {
         if (this._savedGenTitle && this.titleEl) {
             this.titleEl.textContent = this._savedGenTitle;
         }
+
         if (this._savedGenBody && this.bodyEl) {
             this.bodyEl.innerHTML = this._savedGenBody;
         }
+
+        const storyEl = document.getElementById('generate-story');
+        if (storyEl) storyEl.disabled = true;
+
+        const resultEl = document.getElementById('generate-result');
+        if (resultEl && this._genSteps) {
+            resultEl.innerHTML = this._renderGenSteps();
+
+            if (this._genCurrentStep >= 0 && this._genSteps[this._genCurrentStep]?.status === 'active') {
+                this._typewriterEffect(
+                    `gen-step-text-${this._genCurrentStep}`,
+                    this._genSteps[this._genCurrentStep].text,
+                    40
+                );
+            }
+
+            if (this._genCurrentStep === 2 && this._genSteps[2]?.status === 'active') {
+                this._startGenSubStepCarousel();
+            }
+        }
+
         if (this._savedGenFooterClass && this.footerEl) {
             this.footerEl.className = this._savedGenFooterClass;
             this.footerEl.innerHTML = '';
@@ -786,7 +854,9 @@ class ModalManager {
             const subHint = this._extractSubHint(message, stepIdx);
             if (subHint && stepIdx === 2) {
                 this._genSubHintFromBackend = subHint;
-                this._updateSubHintDisplay();
+                if (!this._isShowingGenCancelConfirm) {
+                    this._updateSubHintDisplay();
+                }
             }
             return;
         }
@@ -805,8 +875,12 @@ class ModalManager {
             if (subHint) {
                 this._genSubHintFromBackend = subHint;
             }
-            this._startGenSubStepCarousel();
+            if (!this._isShowingGenCancelConfirm) {
+                this._startGenSubStepCarousel();
+            }
         }
+
+        if (this._isShowingGenCancelConfirm) return;
 
         const resultEl = document.getElementById('generate-result');
         if (resultEl) {
@@ -874,6 +948,11 @@ class ModalManager {
         }
         this._clearGenSubStepTimer();
         this._isGenerating = false;
+
+        if (this._isShowingGenCancelConfirm) {
+            this._genErrorDuringConfirm = errorJson;
+            return;
+        }
 
         let errorType = 'unknown';
         try {
@@ -959,6 +1038,12 @@ class ModalManager {
         }
         this._clearGenSubStepTimer();
         this._isGenerating = false;
+
+        if (this._isShowingGenCancelConfirm) {
+            this._genCompletedDuringConfirm = true;
+            return;
+        }
+
         this.hide();
     }
 
