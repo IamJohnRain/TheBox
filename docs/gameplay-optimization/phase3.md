@@ -592,10 +592,12 @@ class DualInterrogationTool(Tool):
 
 ---
 
-### 3a.4 工具配置（game_config.py Phase 3a 配置）
+### 3a.4 工具配置（gameplay_balance.json Phase 3a 配置）
+
+工具次数、解锁等级和AP消耗全部写入 `config/gameplay_balance.json` 的 `tools.definitions`。`core/game_config.py` 可导出 `TOOL_DEFINITIONS` 兼容字段，但不得在 Python 中重新定义默认数值。
 
 ```python
-# core/game_config.py — Phase 3a 添加
+# core/game_config.py — Phase 3a 兼容导出，值来自 gameplay_balance.json
 
 TOOL_DEFINITIONS = {
     "psych_profile_basic":    {"display_name": "心理侧写（初级）", "max_uses": 1, "unlock_level": 2,  "cost_ap": 0},
@@ -712,7 +714,7 @@ import json
 import logging
 from typing import Optional, Dict, Any
 from core.db import get_connection
-from core.game_config import EXPERIENCE_CURVE, LEVEL_UNLOCKS
+from core.game_config import EXPERIENCE_CURVE, LEVEL_UNLOCKS, get_default_evidence_uses, get_default_initial_pressure
 
 logger = logging.getLogger(__name__)
 
@@ -769,7 +771,7 @@ class PlayerProfile:
 
     def get_evidence_uses(self) -> int:
         """获取当前等级的证据使用次数。"""
-        return LEVEL_UNLOCKS.get(self.level, {}).get("evidence_uses", 4)
+        return LEVEL_UNLOCKS.get(self.level, {}).get("evidence_uses", get_default_evidence_uses())
 
     def get_total_action_points(self, base_ap: int) -> int:
         """根据等级奖励计算本局总 AP。"""
@@ -779,8 +781,10 @@ class PlayerProfile:
                 bonus += unlock.get("ap_bonus", 0)
         return base_ap + bonus
 
-    def get_initial_pressure(self, base_pressure: int = 20) -> int:
+    def get_initial_pressure(self, base_pressure: Optional[int] = None) -> int:
         """根据等级奖励计算初始压力。奖励幅度保持小，避免破坏低难度平衡。"""
+        if base_pressure is None:
+            base_pressure = get_default_initial_pressure()
         delta = 0
         for level, unlock in LEVEL_UNLOCKS.items():
             if level <= self.level:
@@ -886,10 +890,12 @@ def _migrate_v1_to_v2(cursor):
     """)
 ```
 
-### 3b.3 等级配置（game_config.py Phase 3b 配置）
+### 3b.3 等级配置（gameplay_balance.json Phase 3b 配置）
+
+经验曲线、等级解锁、AP奖励、初始压力修正全部写入 `config/gameplay_balance.json` 的 `progression` 分区。下面 Python 片段只表示 `core.game_config` 兼容导出后的形状。
 
 ```python
-# core/game_config.py — Phase 3b 添加
+# core/game_config.py — Phase 3b 兼容导出，值来自 gameplay_balance.json
 
 EXPERIENCE_CURVE: List[int] = [
     0, 50, 110, 180, 260, 350, 460, 580, 720, 880,
@@ -960,6 +966,7 @@ Phase 3c 只实现高风险工具，不再修改工具框架、DB迁移或等级
 | 三级侧写可见性 | 初级只显示 personality+fear，高级显示+defiance/empathy，大师显示全部 |
 | 等级经验计算 | 经验达到阈值时正确升级 |
 | 等级解锁 | 不同等级解锁对应工具（含侧写三档） |
+| 配置覆盖 | 临时配置修改工具次数、解锁等级、经验曲线、AP奖励后，工具和升级行为同步变化 |
 | 数据库迁移 | v0->v1->v2 增量迁移正确 |
 | 存档兼容 | 工具状态和等级数据正确序列化/反序列化 |
 | psych_collapse 约束 | 验证不再直接修改 confession_level |
@@ -976,10 +983,10 @@ Phase 3c 只实现高风险工具，不再修改工具框架、DB迁移或等级
 
 | 包 | 范围 | 允许修改 | 验收重点 |
 |----|------|----------|----------|
-| 3a-1 工具框架 | Tool抽象类、注册表、引擎调度、工具次数状态 | `core/tools/`, `core/interrogation.py`, `tests/test_tools.py` | 未注册工具报错，次数扣减与序列化正确 |
-| 3a-2 基础工具 | 初级/高级/大师侧写、记忆回溯、安全的沉默施压 | `core/tools/*.py`, `tests/test_tools_basic.py` | 侧写只显示等级允许维度，显示当前动态值 |
+| 3a-1 工具框架 | Tool抽象类、注册表、引擎调度、工具次数状态 | `config/gameplay_balance.json`, `core/game_config.py`, `core/tools/`, `core/interrogation.py`, `tests/test_tools.py` | 未注册工具报错，次数扣减与序列化正确，次数来自配置 |
+| 3a-2 基础工具 | 初级/高级/大师侧写、记忆回溯、安全的沉默施压 | `config/gameplay_balance.json`, `core/tools/*.py`, `tests/test_tools_basic.py` | 侧写只显示等级允许维度，显示当前动态值，解锁等级来自配置 |
 | 3a-3 工具UI | 工具栏、按钮禁用、ToolUseEvent处理 | `ui/web/`, `ui/web_bridge.py`, `tests/test_tool_ui.py` | 次数变化前后端一致，AP不足禁用 |
-| 3b-1 玩家档案 | `PlayerProfile`、经验、升级、解锁查询 | `core/player.py`, `tests/test_player_profile.py` | 曲线阈值、ap_bonus、initial_pressure_delta正确 |
+| 3b-1 玩家档案 | `PlayerProfile`、经验、升级、解锁查询 | `config/gameplay_balance.json`, `core/game_config.py`, `core/player.py`, `tests/test_player_profile.py` | 曲线阈值、ap_bonus、initial_pressure_delta正确且可配置 |
 | 3b-2 DB迁移 | player_profile表、版本号迁移、旧库兼容 | `core/db.py`, `tests/test_db_migrations.py` | v0/v1/v2迁移幂等，不丢旧session |
 | 3b-3 成长UI | 等级/经验条、难度解锁展示 | `ui/web/`, `tests/test_web_integration.py` | 等级变化后UI刷新 |
 | 3c-1 复杂工具 | 测谎/威胁/对质/心理崩溃 | `core/tools/`, `tests/test_advanced_tools.py` | 不泄露隐藏知识，不绕过供词和真凶判断 |
@@ -990,6 +997,7 @@ Phase 3c 只实现高风险工具，不再修改工具框架、DB迁移或等级
 |------|------|
 | 工具隔离 | 每个工具一个类，核心逻辑可单测，不把工具逻辑写进 `submit_action` |
 | 次数和AP | 使用工具后次数和AP同时正确扣减，存档恢复后不重置 |
+| 数值配置 | 工具次数、AP消耗、解锁等级、经验曲线、等级奖励全部来自配置文件，并有覆盖测试 |
 | 可见性 | 侧写工具严格按等级暴露维度，`credibility` 不显示 |
 | DB安全 | 迁移可重复执行，旧数据库无player_profile时自动补齐 |
 | 复杂工具安全 | 测谎不传 `knowledge`，心理崩溃不直接改 `confession_level` |
@@ -1003,6 +1011,7 @@ Phase 3c 只实现高风险工具，不再修改工具框架、DB迁移或等级
 | 侧写动态值 | 审讯中 fear/defiance 改变后，侧写显示当前值而非初始值 |
 | 工具耗尽 | 工具使用达到上限后按钮禁用，引擎拒绝再次执行 |
 | 升级解锁 | 增加经验跨越阈值后工具和证据次数刷新 |
+| 配置调参 | 将某工具解锁等级临时改为Lv.1后，Lv.1即可使用该工具，无需改代码 |
 | 旧库迁移 | 空库、旧session库、已有player_profile库三种情况均可启动 |
 | 复杂工具边界 | 每个复杂工具覆盖成功、失败、AP不足、次数耗尽四类路径 |
 

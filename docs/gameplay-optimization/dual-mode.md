@@ -1,8 +1,9 @@
 # 双模式系统设计 — 剧情模式 + 自定义模式
 
-> **版本**：v1.0  
+> **版本**：v1.1  
 > **依赖**：Phase 1（供词层级系统）已完成  
-> **状态**：待评审
+> **状态**：待评审  
+> **v1.1 变更**：剧情模式不直接硬编码AP、经验、难度等平衡数值；章节脚本只声明难度或剧情覆盖意图，最终数值由 `config/gameplay_balance.json` 派生。
 
 ---
 
@@ -68,6 +69,7 @@
 - **组合优于继承**：StoryEngine 持有 InterrogationEngine 实例，非继承
 - **不修改底层**：InterrogationEngine 接口不变，StoryEngine 在上层编排
 - **协调器模式**：GameSession 统一管理双模式会话，避免 WebMainWindow 膨胀
+- **数值配置化**：剧情章节不写死AP/经验/工具次数，统一通过 `core.game_config` 根据难度和等级读取
 
 ### 2.2 GameSession 协调器
 
@@ -296,7 +298,7 @@ def get_narrative(self, result: ChapterResult) -> str:
         "culprit_name": "张某",
         "suspects": [...],
         "evidences": [...],
-        "total_action_points": 22
+        "difficulty": "normal"
       },
       "merge_to": null,
       "branch": {
@@ -350,6 +352,8 @@ def get_narrative(self, result: ChapterResult) -> str:
   ]
 }
 ```
+
+章节脚本如需特殊调参，优先使用声明式覆盖字段并通过 `StoryLoader` 校验，例如 `"balance_profile": "tutorial"` 或 `"difficulty": "normal"`；不建议在 `case_data` 内直接写 `total_action_points`。若确有剧情关卡需要固定数值，也必须引用 `gameplay_balance.json` 中预定义的 profile，而不是在脚本里写裸数字。
 
 ### 4.2 分支条件格式（声明式）
 
@@ -682,7 +686,7 @@ class PlayerProfile:
 
 | 来源 | 经验值 | 说明 |
 |------|--------|------|
-| 剧情模式每章完成 | 基础 20 exp × 评级系数 | win=1.5x, partial=1.0x, fail=0.5x |
+| 剧情模式每章完成 | 配置基础经验 × 评级系数 | 默认基础20 exp；win/partial/fail系数来自 `gameplay_balance.json` |
 | 自定义模式每局完成 | 沿用 Phase 4 评分系统 | 供词深度 + 行动效率 + 证据利用 + LLM评分 |
 
 ### 8.3 存档扩展

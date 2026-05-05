@@ -1,8 +1,9 @@
-# Phase 1：基础重构 — 证据系统 + 供词层级 + 恐惧值 + 多维隐藏指标 + 交互限制（优化版 v1.3）
+# Phase 1：基础重构 — 证据系统 + 供词层级 + 恐惧值 + 多维隐藏指标 + 交互限制（优化版 v1.4）
 
 > **评审变更**：修复P0 `_postprocess`冲突、抽取`_call_llm()`、统一胜利入口`_check_victory()`、压力程序化计算、移除`requires_semantic`、game_config分阶段配置  
 > **v1.2 变更**：新增恐惧值系统、嫌疑人5维隐藏指标、施压/共情交互限制（混合方案）、聊天轮次限制  
 > **v1.3 变更**：全维度动态变化机制、主+副性格组合、反扑机制、维度边界与联动规则，详见 [`suspect-dimensions.md`](suspect-dimensions.md)
+> **v1.4 变更**：所有数值改为配置文件默认值，新增 `config/gameplay_balance.json`；`core/game_config.py` 只做加载、校验和访问器，不在业务逻辑硬编码数值。
 
 ## 目标
 
@@ -12,7 +13,7 @@
 
 | # | 任务 | 涉及文件 | 预估工作量 |
 |---|------|---------|-----------|
-| 1.1 | 新增游戏配置模块 | `core/game_config.py` (新) | 小 |
+| 1.1 | 新增玩法配置文件与加载器 | `config/gameplay_balance.json` (新), `core/game_config.py` (新) | 中 |
 | 1.2 | 重构证据出示链路 | `core/suspect_agent.py`, `core/interrogation.py`, `ui/web_main_window.py` | 中 |
 | 1.3 | 证据使用次数限制 | `core/interrogation.py`, `ui/web/js/evidence.js` | 小 |
 | 1.4 | 已出示证据 UI 标记 | `ui/web/js/evidence.js` | 小 |
@@ -21,22 +22,144 @@
 | 1.7 | 修复静态系统提示词 | `core/suspect_agent.py` | 小 |
 | 1.8 | 案件 Schema 扩展 | `core/case_generator.py` | 小 |
 | 1.9 | 恐惧值系统 | `core/suspect_agent.py`, `core/interrogation.py`, `schemas/events.py` | 中 |
-| 1.10 | 嫌疑人多维隐藏指标 | `core/suspect_agent.py`, `core/case_generator.py`, `core/game_config.py` | 中 |
+| 1.10 | 嫌疑人多维隐藏指标 | `core/suspect_agent.py`, `core/case_generator.py`, `config/gameplay_balance.json`, `core/game_config.py` | 中 |
 | 1.11 | 施压/共情交互限制 | `core/interrogation.py`, `ui/web/js/`, `ui/web/index.html` | 中 |
 | 1.12 | 存档兼容 | `core/interrogation.py`, `core/suspect_agent.py` | 小 |
 | 1.13 | 测试 | `tests/` | 中 |
 
 ---
 
-## 1.1 新增游戏配置模块
+## 1.1 新增玩法配置文件与加载器
 
-**文件**: `core/game_config.py` (新建)
+**文件**: `config/gameplay_balance.json` (新建), `core/game_config.py` (新建)
 
-**目的**: 将所有可调参数集中管理，避免硬编码，支持后续调整。**Phase 1 只放置 Phase 1 需要的配置**，后续 Phase 配置按阶段添加。
+**目的**: 将所有可调数值放入配置文件，支持后续通过改配置调参。**Phase 1 只放置 Phase 1 需要的配置字段**，后续 Phase 按阶段追加字段。`core/game_config.py` 不保存业务数值，只负责加载、校验、合并覆盖和提供只读访问器。
+
+### 配置文件优先原则
+
+| 规则 | 要求 |
+|------|------|
+| 默认配置 | 仓库内新增 `config/gameplay_balance.json`，保存默认玩法数值 |
+| 调试覆盖 | 支持 `THEBOX_GAMEPLAY_CONFIG` 指向临时配置文件，方便测试和平衡调参 |
+| 业务读取 | 引擎、嫌疑人、评分、工具系统只能通过 `core.game_config` 访问器读取数值 |
+| 禁止硬编码 | 不允许在 `submit_action`、`respond_evidence`、评分和工具逻辑里直接写 `22`、`18`、`0.1`、`85` 等平衡数值 |
+| 兼容导出 | 如果保留 `DEFAULT_TOTAL_ACTION_POINTS` 等名称，只能作为从 JSON 读取后的只读别名，不能在 Python 中重新定义默认值 |
+
+### Phase 1 配置文件示例
+
+```json
+{
+  "config_version": 1,
+  "confession": {
+    "levels": {
+      "0": {"name": "否认", "desc": "完全否认一切"},
+      "1": {"name": "动摇", "desc": "情绪波动，出现紧张、回避"},
+      "2": {"name": "部分承认", "desc": "承认部分事实，但隐瞒关键"},
+      "3": {"name": "关键突破", "desc": "透露动机/手段/时机之一"},
+      "4": {"name": "完全崩溃", "desc": "完整供述真相"}
+    },
+    "thresholds": {
+      "0": {"pressure": 40, "min_turns": 3, "requires_evidence": false},
+      "1": {"pressure": 55, "min_turns": 5, "requires_evidence": true},
+      "2": {"pressure": 70, "min_turns": 7, "requires_evidence": true},
+      "3": {"pressure": 85, "min_turns": 10, "requires_evidence": true}
+    },
+    "pressure_window": 5,
+    "progress_rate": {"low": 0.02, "medium": 0.05, "high": 0.10, "panic": 0.15}
+  },
+  "pressure": {
+    "initial": 20,
+    "segments": {"low": [0, 30], "medium": [30, 60], "high": [60, 80], "panic": [80, 100]},
+    "soft_factor": {"min": 0.3, "max": 1.5},
+    "per_turn": {"decay_zone": [0, 30], "decay_rate": -1, "stable_zone": [30, 70], "stable_rate": 0, "growth_zone": [70, 100], "growth_rate": 1, "floor": 15}
+  },
+  "evidence": {
+    "default_uses": 4,
+    "pressure_base": {"physical": 18, "document": 12, "testimony": 9},
+    "strength_multiplier": 0.1,
+    "fear_delta": {"correct": 8, "wrong": -10}
+  },
+  "fear": {
+    "default": 50,
+    "neutral": 50,
+    "per_turn_decay": -1,
+    "provocation_threshold": 15
+  },
+  "dimensions": {
+    "bounds": {
+      "fear": {"min": 0, "max": 100},
+      "defiance": {"min": 5, "max": 100},
+      "empathy_susceptibility": {"min": 0, "max": 95},
+      "deception_skill": {"min": 5, "max": 100},
+      "loyalty": {"min": 0, "max": 100},
+      "credibility": {"min": 0, "max": 100}
+    },
+    "personality_weights": {"primary": 0.7, "secondary": 0.3}
+  },
+  "interaction_limits": {
+    "chat_turns_per_suspect": 12,
+    "pressure_uses_per_suspect": 2,
+    "empathy_uses_per_suspect": 2,
+    "second_use_multiplier": 0.5
+  },
+  "action_points": {
+    "default_total": 22,
+    "costs": {"chat": 1, "pressure": 2, "empathy": 2, "present_evidence": 2},
+    "penalties": {"wrong_evidence": 2, "wrong_pressure": 1, "wrong_empathy": 1, "innocent_breakdown": 3}
+  }
+}
+```
+
+### `core/game_config.py` 访问器示例
+
+以下 Python 片段只描述加载器形态。文档后续为了简洁仍会引用 `DEFAULT_TOTAL_ACTION_POINTS`、`EVIDENCE_PRESSURE_BASE` 等名字，但这些名字都必须由配置文件派生。
 
 ```python
-"""Game configuration — all tunable parameters in one place."""
+"""Gameplay configuration loader.
 
+All tunable values come from config/gameplay_balance.json.
+Business logic should import accessors from this module instead of hardcoding numbers.
+"""
+
+from typing import Dict, Any
+
+GAMEPLAY_CONFIG = load_gameplay_config()
+
+
+def get_action_cost(action_type: str) -> int:
+    return GAMEPLAY_CONFIG["action_points"]["costs"][action_type]
+
+
+def get_ap_penalty(penalty_type: str) -> int:
+    return GAMEPLAY_CONFIG["action_points"]["penalties"][penalty_type]
+
+
+def get_evidence_pressure_base(evidence_type: str) -> int:
+    return GAMEPLAY_CONFIG["evidence"]["pressure_base"].get(evidence_type, 0)
+
+
+def get_confession_threshold(level: int) -> Dict[str, Any]:
+    return GAMEPLAY_CONFIG["confession"]["thresholds"][str(level)]
+
+
+def get_dimension_bounds(name: str) -> Dict[str, int]:
+    return GAMEPLAY_CONFIG["dimensions"]["bounds"][name]
+
+
+# Optional compatibility aliases. Values are derived from GAMEPLAY_CONFIG at import time.
+DEFAULT_TOTAL_ACTION_POINTS = GAMEPLAY_CONFIG["action_points"]["default_total"]
+DEFAULT_INITIAL_PRESSURE = GAMEPLAY_CONFIG["pressure"]["initial"]
+DEFAULT_EVIDENCE_USES = GAMEPLAY_CONFIG["evidence"]["default_uses"]
+EVIDENCE_PRESSURE_BASE = GAMEPLAY_CONFIG["evidence"]["pressure_base"]
+EVIDENCE_STRENGTH_MULTIPLIER = GAMEPLAY_CONFIG["evidence"]["strength_multiplier"]
+AP_PENALTY = GAMEPLAY_CONFIG["action_points"]["penalties"]
+```
+
+### 默认配置字段参考
+
+以下常量形态仅用于说明默认值和字段命名，实际实现应写入 `config/gameplay_balance.json`，再由 `core/game_config.py` 暴露。
+
+```python
 from typing import Dict, List, Any
 
 # ──────────────────────────────────────────────
@@ -1518,7 +1641,7 @@ engine.mistake_log = state.get("mistake_log", [])
 |---------|---------|
 | `tests/test_confession.py` (新) | 供词层级升级逻辑、进度更新、阈值边界条件 |
 | `tests/test_evidence_rework.py` (新) | respond_evidence 不传证据名、证据次数限制、压力程序化计算、恐惧系数 |
-| `tests/test_game_config.py` (新) | 配置值正确性、默认值、PERSONALITY_DIMENSIONS 映射 |
+| `tests/test_game_config.py` (新) | 默认配置加载、临时配置覆盖、非法配置校验、PERSONALITY_DIMENSIONS 映射 |
 | `tests/test_victory_conditions.py` (新) | `_check_victory` 各条件优先级、低供词层级拦截、高供词层级触发 |
 | `tests/test_fear_system.py` (新) | 恐惧值初始值、错误证据恐惧下降、恐惧系数影响施压效果 |
 | `tests/test_hidden_dimensions.py` (新) | 隐藏维度默认值、性格映射、综合压力公式 |
@@ -1536,6 +1659,7 @@ engine.mistake_log = state.get("mistake_log", [])
 | 恐惧-压力交互 | 出示错误证据→恐惧下降→后续施压效果减弱 |
 | 多维指标综合计算 | 验证 fear × defiance 综合影响压力增量 |
 | 交互限制耗尽 | 自由聊天12轮后嫌疑人拒绝，施压/共情各2次后不可再使用；第二次效果减半 |
+| 配置覆盖生效 | 使用临时 `gameplay_balance.json` 修改AP/证据基值/阈值后，引擎行为随配置变化 |
 
 ### 回归测试
 
@@ -1555,7 +1679,7 @@ Phase 1 是后续所有阶段的地基，不建议一次性交给弱模型完整
 
 | 包 | 范围 | 允许修改 | 不允许修改 | 验收重点 |
 |----|------|----------|------------|----------|
-| 1a 配置与Schema | 新增/整理配置、`culprit_name`、证据字段、维度默认值 | `core/game_config.py`, `core/case_generator.py`, `tests/test_game_config.py`, `tests/test_case_schema.py` | 不改 `submit_action`、不改 UI | 默认值、Schema校验、旧mock case兼容 |
+| 1a 配置与Schema | 新增 `gameplay_balance.json`、加载器、`culprit_name`、证据字段、维度默认值 | `config/gameplay_balance.json`, `core/game_config.py`, `core/case_generator.py`, `tests/test_game_config.py`, `tests/test_case_schema.py` | 不改 `submit_action`、不改 UI | 默认值、覆盖配置、Schema校验、旧mock case兼容 |
 | 1b LLM调用隔离 | 抽取 `_call_llm`、动态系统提示词、fake LLM测试入口 | `core/suspect_agent.py`, `tests/test_suspect_agent.py` | 不改胜利判定、不改前端 | pressure 使用当前值，LLM不返回 `pressure_change` |
 | 1c 证据与胜利入口 | `respond_evidence`、程序化压力、`_check_victory`、低层级拦截 | `core/interrogation.py`, `core/suspect_agent.py`, `tests/test_evidence_rework.py`, `tests/test_victory_conditions.py` | 不改 UI 样式、不加工具系统 | 出示证据不自动胜利，层级>=3才可触发秘密胜利 |
 | 1d AP与交互限制 | AP扣减、证据次数、聊天/施压/共情次数 | `core/interrogation.py`, `tests/test_interaction_limits.py` | 不改 LLM prompt | 普通22 AP路径可用，错误证据额外-2 AP |
@@ -1571,6 +1695,7 @@ Phase 1 是后续所有阶段的地基，不建议一次性交给弱模型完整
 | LLM隔离 | fake LLM 能返回固定 `{reply, secret_triggered, rebuttal_believable}` |
 | 基线测试 | 修改前 `pytest tests/ -m "not slow and not real_api" -v` 可运行，若失败需记录已有失败 |
 | 任务边界 | 每个任务包有明确目标文件和验收命令，不跨包顺手重构 |
+| 配置边界 | 已明确本包新增的配置字段路径和默认值，禁止把数值直接写进业务文件 |
 
 ### Definition of Done
 
@@ -1578,7 +1703,7 @@ Phase 1 是后续所有阶段的地基，不建议一次性交给弱模型完整
 |------|------|
 | 单包测试 | 对应任务包测试全部通过 |
 | 快速回归 | `pytest tests/ -m "not slow and not real_api" -v` 通过 |
-| 数值断言 | `DEFAULT_TOTAL_ACTION_POINTS=22`、初始压力20、证据基值18/12/9、阈值40/55/70/85 均有测试 |
+| 数值配置 | 默认配置断言覆盖普通AP=22、初始压力20、证据基值18/12/9、阈值40/55/70/85；临时配置覆盖后行为同步变化 |
 | 存档兼容 | 旧状态缺字段时使用默认值，不抛异常 |
 | UI一致 | 新增事件在 `schemas/events.py`、WebBridge、前端处理函数中字段名一致 |
 | 无真实API | 测试不调用真实LLM，不要求API key |
@@ -1594,13 +1719,14 @@ Phase 1 是后续所有阶段的地基，不建议一次性交给弱模型完整
 | 交互耗尽 | 自由聊天12轮后拒绝；施压/共情各2次后拒绝，第二次效果减半 |
 | 旧存档兼容 | 旧fixture不含新字段仍可加载，并补齐默认值 |
 | 平衡模拟 | 普通难度42组合胜率30%-80%，最难组合不低于20%，最易组合不高于90% |
+| 调参无改码 | 将普通AP改为24或物证基值改为20后，只改配置文件即可让测试观察到差异 |
 
 ---
 
 ## 实施顺序建议
 
 ```
-1.1  game_config.py（无依赖，先建，含恐惧、隐藏维度、交互限制配置）
+1.1  gameplay_balance.json + game_config.py（无依赖，先建配置文件、加载器和校验器，含恐惧、隐藏维度、交互限制配置）
     ↓
 1.2  _call_llm 抽取 + _get_system_message 动态化（基础改造）
     ↓
@@ -1638,14 +1764,14 @@ Phase 1 是后续所有阶段的地基，不建议一次性交给弱模型完整
 | 变更项 | v1.0 原方案 | v1.3 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | `_postprocess` | 原样保留，触发即胜利 | 低供词层级拦截，>=3才触发 | P0：防止绕过供词系统 |
-| 压力来源 | LLM返回`pressure_change`+引擎硬编码+20 | 引擎程序化计算，LLM不返回 | P1：避免双重计算 |
+| 压力来源 | LLM返回`pressure_change`+引擎硬编码+20 | 引擎程序化计算并从配置读取默认基值，LLM不返回 | P1：避免双重计算 |
 | `respond()`/`respond_evidence()` | 各30行重复代码 | 抽取`_call_llm()`公共方法 | P1：消除代码重复 |
 | 胜利判定 | 分散在`submit_action`中 | 统一`_check_victory()`入口 | P1：避免双重判定 |
 | `requires_semantic` | 定义在阈值中但无实现 | Phase 1移除，Phase 2实现 | P1：避免未完成的功能 |
-| `game_config.py` | 包含Phase 1-4所有配置 | 仅Phase 1配置，后续分阶段添加 | P2：减少早期测试负担 |
+| 配置文件 | Python常量或一次性包含Phase 1-4所有配置 | `config/gameplay_balance.json` 按阶段追加字段，`game_config.py` 仅加载/校验/提供访问器 | P2：减少早期测试负担，并支持调参 |
 | 嫌疑人维度 | 仅 pressure/confession | 8指标(2可见+6隐藏) | P0：增加个体差异和策略深度 |
 | 施压效果 | 固定公式计算 | fear × defiance 综合系数 | P0：恐惧影响施压，错误操作有惩罚 |
-| 交互限制 | 无限制 | 自由聊天12轮/人 + 施压2次/人 + 共情2次/人（第二次减半） | P0：避免无限试错，同时保留基本容错 |
+| 交互限制 | 无限制 | 默认自由聊天12轮/人 + 施压2次/人 + 共情2次/人（第二次减半），均从配置读取 | P0：避免无限试错，同时保留基本容错 |
 | 错误操作 | 无惩罚 | fear-10 + mistake_log 记录 | P1：增加策略博弈 |
 | 隐藏维度 | 初始化后不变 | 全维度动态变化+维度联动 | P0：维度间正/负反馈循环 |
 | 性格系统 | 5种离散类型 | 7种+主副组合(0.7+0.3加权) | P1：更丰富心理画像 |
