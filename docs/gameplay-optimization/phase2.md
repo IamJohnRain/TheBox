@@ -1,7 +1,8 @@
-# Phase 2：审讯深度 — 反驳机制 + 压力增强 + 证据链 + 时间-压力动态 + 错误惩罚（优化版 v1.2）
+# Phase 2：审讯深度 — 反驳机制 + 压力增强 + 证据链 + 时间-压力动态 + 错误惩罚 + 反扑机制（优化版 v1.3）
 
 > **评审变更**：修复P0主动开口线程阻塞（改为轮次触发+异步）、反驳增加程序化兜底、证据链奖励配置化、高压行为指令动态注入  
-> **v1.2 变更**：新增时间-压力双向动态关系、错误惩罚机制（mistake_log评分联动）、维度指标对反驳/共情的影响
+> **v1.2 变更**：新增时间-压力双向动态关系、错误惩罚机制（mistake_log评分联动）、维度指标对反驳/共情的影响  
+> **v1.3 变更**：反扑机制5种行为、维度动态变化触发器（反驳结果→deception/credibility变化）、共情→empathy正反馈循环，详见 [`suspect-dimensions.md`](suspect-dimensions.md)
 
 ## 前置依赖
 
@@ -22,7 +23,8 @@ Phase 1 完成（供词层级、证据系统重构、统一胜利入口 `_check_
 | 2.5 | 嫌疑人主动开口 | `core/interrogation.py`, `ui/web_main_window.py` | 中 |
 | 2.6 | 时间-压力双向动态 | `core/interrogation.py`, `core/game_config.py` | 中 |
 | 2.7 | 错误惩罚机制 | `core/interrogation.py`, `schemas/events.py`, `ui/web/` | 中 |
-| 2.8 | 测试 | `tests/` | 中 |
+| 2.8 | 反扑机制 | `core/interrogation.py`, `schemas/events.py`, `ui/web/` | 中 |
+| 2.9 | 测试 | `tests/` | 中 |
 
 ---
 
@@ -79,8 +81,9 @@ if rebuttal and rebuttal_believable:
 
 if rebuttal:
     if rebuttal_believable:
-        # 反驳成功：压力不增加（覆盖证据带来的压力增量），嫌疑人可信度上升
+        # 反驳成功：压力不增加，嫌疑人可信度上升
         suspect.credibility = min(100, suspect.credibility + 10)
+        suspect.deception_skill = min(100, suspect.deception_skill + 1)  # 得逞更自信
         pressure_delta = 0  # 抵消证据压力增量
         rebuttal_event: RebuttalEvent = {
             "type": "rebuttal",
@@ -90,6 +93,23 @@ if rebuttal:
             "credibility_change": +10,
         }
         events.append(rebuttal_event)
+    else:
+        # 反驳失败：压力按证据强度增加，供词进度额外提升
+        suspect.credibility = max(0, suspect.credibility - 5)
+        suspect.deception_skill = max(5, suspect.deception_skill - 3)  # 被识破→信心受挫
+        # pressure_delta 保持证据原本的计算值（Phase 1 已实现的逻辑）
+        rebuttal_event: RebuttalEvent = {
+            "type": "rebuttal",
+            "suspect_index": self.current_suspect_index,
+            "rebuttal_text": result["reply"],
+            "believable": False,
+            "credibility_change": -5,
+        }
+        events.append(rebuttal_event)
+
+# credibility 对反驳阈值的额外微调（在下次反驳判定时生效）
+# credibility > 70 → effective_hard_threshold += 5
+# credibility < 30 → effective_hard_threshold -= 5
     else:
         # 反驳失败：压力按证据强度增加，供词进度额外提升
         suspect.credibility = max(0, suspect.credibility - 5)
@@ -230,10 +250,14 @@ elif action == "empathy":
     suspect.fear = max(0, suspect.fear - int(10 * empathy_effect))
     # 共情增加供词进度（而非压力）
     suspect.confession_progress = min(1.0, suspect.confession_progress + 0.1 * empathy_effect)
+    # 共情成功 → empathy正反馈（被理解后更愿意敞开）
+    suspect.empathy_susceptibility = min(95, suspect.empathy_susceptibility + 2)
     result = suspect.respond(content)
 ```
 
 共情不增加压力，但增加供词进度和降低恐惧值——适用于"高压力但低供词"的情况，帮助突破供词瓶颈。
+
+**施压与共情互斥**：施压成功后 `empathy_susceptibility -= 2`（施压让嫌疑人关上心门），共情成功后 `empathy_susceptibility += 2`（被理解后更愿意敞开）。玩家需要选择先施压还是先共情。
 
 ---
 
@@ -547,7 +571,92 @@ class MistakeEvent(TypedDict):
 
 ---
 
-## 2.8 测试计划
+## 2.8 反扑机制
+
+### 设计
+
+嫌疑人不是沙袋，会根据状态主动反击。5种反扑行为完整定义详见 [`suspect-dimensions.md`](suspect-dimensions.md) 反扑机制章节。
+
+### 反扑检测
+
+在 `submit_action` 末尾统一检查（与主动开口同位置，不在 tick 中避免阻塞）：
+
+```python
+def _check_proactive(self, suspect) -> Optional[ProactiveEvent]:
+    """检查反扑条件。"""
+    from core.game_config import PROACTIVE_TRIGGERS, FEAR_PROVOCATION_THRESHOLD
+    
+    # 挑衅态度：fear < 15
+    if suspect.fear < FEAR_PROVOCATION_THRESHOLD:
+        return ProactiveEvent(
+            type="proactive",
+            suspect_index=self.current_suspect_index,
+            proactive_type="provocation",
+            content=self._generate_proactive_content(suspect, "provocation"),
+            effects={"pressure": -2, "defiance": +2},
+        )
+    
+    # 反击质问：连续2次反驳成功
+    if self._consecutive_rebuttal_success >= 2:
+        self._consecutive_rebuttal_success = 0  # 重置
+        return ProactiveEvent(
+            type="proactive",
+            suspect_index=self.current_suspect_index,
+            proactive_type="counter_attack",
+            content=self._generate_proactive_content(suspect, "counter_attack"),
+            effects={"fear": +10, "defiance": +3},
+        )
+    
+    # 试探玩家：pressure>40 且 fear<20
+    if suspect.pressure > 40 and suspect.fear < 20:
+        return ProactiveEvent(
+            type="proactive",
+            suspect_index=self.current_suspect_index,
+            proactive_type="probe",
+            content=self._generate_proactive_content(suspect, "probe"),
+            effects={"fear": -10},  # 仅当玩家无法出示证据时
+        )
+    
+    # 恢复镇定：连续3轮无有效施压
+    if self._consecutive_idle_turns >= 3:
+        self._consecutive_idle_turns = 0
+        return ProactiveEvent(
+            type="proactive",
+            suspect_index=self.current_suspect_index,
+            proactive_type="recover",
+            content=self._generate_proactive_content(suspect, "recover"),
+            effects={"defiance": +3, "fear": -5, "deception_skill": +2},
+        )
+    
+    return None
+```
+
+### 新增事件类型
+
+```python
+class ProactiveEvent(TypedDict):
+    type: Literal["proactive"]
+    suspect_index: int
+    proactive_type: str  # "counter_attack" / "gloat" / "provocation" / "probe" / "recover"
+    content: str
+    effects: Dict[str, int]
+```
+
+### 反扑计数器
+
+在 `InterrogationEngine.__init__` 中新增：
+
+```python
+self._consecutive_rebuttal_success: int = 0
+self._consecutive_idle_turns: int = 0
+```
+
+在反驳成功时 `_consecutive_rebuttal_success += 1`，失败时重置为0。
+在无有效施压时 `_consecutive_idle_turns += 1`，有有效操作时重置为0。
+
+---
+
+## 2.9 测试计划
 
 | 测试 | 说明 |
 |------|------|
@@ -555,6 +664,9 @@ class MistakeEvent(TypedDict):
 | 反驳失败正常增加压力 | 模拟 believable=False 的反驳，验证压力增加 |
 | 反驳程序化兜底 | 模拟 pressure=85 + believable=True，验证程序覆盖为 False |
 | deception_skill 影响反驳 | 模拟 deception_skill=80，验证反驳阈值降低 |
+| credibility 影响反驳 | 模拟 credibility>70，验证反驳阈值放宽 |
+| 反驳结果→deception变化 | 成功+1，失败-3 |
+| 反驳结果→credibility变化 | 成功+10，失败-5 |
 | 证据链触发 | 出示两个 chain_with 关联的证据，验证额外压力 |
 | 主动开口轮次触发 | 验证每5轮检查一次，非每秒检查 |
 | 主动开口异步执行 | 验证主动开口不阻塞 UI 线程 |
@@ -563,23 +675,32 @@ class MistakeEvent(TypedDict):
 | 时间-压力低段衰减 | 压力=30，等待5秒，验证压力下降约2.5 |
 | 时间-压力高段增长 | 压力=80，等待5秒，验证压力增长约1.5 |
 | 时间-压力中间段稳定 | 压力=50，等待5秒，验证压力不变 |
-| 共情效果 | 共情操作后恐惧下降、供词进度增加 |
+| 共情效果 | 共情操作后恐惧下降、供词进度增加、empathy+2 |
+| 共情→empathy正反馈 | 共情成功后empathy_susceptibility+2 |
+| 施压→empathy负反馈 | 施压成功后empathy_susceptibility-2 |
 | 错误证据惩罚 | 出示错误证据→恐惧-10、时间-15s、mistake_log记录 |
 | 无辜崩溃惩罚 | 无辜者confession_level=4→时间-30s、评分-20 |
+| 反扑：挑衅触发 | fear<15时触发，pressure-2/轮, defiance+2/轮 |
+| 反扑：反击质问 | 连续2次反驳成功触发，fear+10, defiance+3 |
+| 反扑：试探玩家 | pressure>40且fear<20触发 |
+| 反扑：恢复镇定 | 连续3轮空闲触发，defiance+3, fear-5 |
+| 每轮维度联动 | pressure>60→defiance-1, fear>70→多维度变化 |
 
 ---
 
 ## Phase 2 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.3 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | 主动开口触发 | `tick()` 中每秒2%概率 | `submit_action` 中每5轮检查 | P0：避免阻塞UI线程 |
-| 反驳可信度 | 完全依赖LLM自评 | LLM判断+程序化兜底 | P1：增加可靠性 |
-| 反驳阈值 | 固定 80/60 | 受 deception_skill 动态调整 | P1：维度指标参与机制 |
+| 反驳可信度 | 完全依赖LLM自评 | LLM判断+程序化兜底+credibility微调 | P1：增加可靠性 |
+| 反驳阈值 | 固定 80/60 | 受 deception_skill + credibility 动态调整 | P1：维度指标参与机制 |
+| 反驳结果→维度变化 | 无 | 成功→deception+1/credibility+10，失败→deception-3/credibility-5 | P1：动态维度 |
 | 证据链奖励 | 硬编码`chain_bonus=10` | `game_config.CHAIN_BONUS` | P2：配置化 |
 | 压力行为指令 | 通用描述 | 4段压力段动态注入 | 增强：细化LLM行为 |
 | 压力动态 | 静态，不操作不变 | 低压力衰减+高压力增长+中间稳定 | P1：增加博弈深度 |
 | 错误操作 | 无惩罚 | mistake_log + 恐惧/时间/评分惩罚 | P1：增加策略博弈 |
-| 共情操作 | 无 | 新增共情类型，受 empathy_susceptibility 影响 | 增强：增加策略选择 |
+| 共情操作 | 无 | 新增共情类型，empathy动态正反馈 | 增强：增加策略选择 |
+| 反扑机制 | 无 | 5种反扑行为（挑衅/反击/试探/得意/恢复） | P0：嫌疑人主动博弈 |
 
 (End of file - total 310 lines)

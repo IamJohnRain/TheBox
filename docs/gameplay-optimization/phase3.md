@@ -1,7 +1,8 @@
-# Phase 3：工具与成长 — 消耗品工具 + 三级心理侧写 + 玩家等级（优化版 v1.2）
+# Phase 3：工具与成长 — 消耗品工具 + 三级心理侧写 + 玩家等级（优化版 v1.3）
 
 > **评审变更**：Phase 3拆分为3a+3b、工具系统预留策略模式接口、修复psych_collapse直接跳级、threat随机改为压力驱动、lie_detector knowledge泄露防护、数据库版本号迁移机制  
-> **v1.2 变更**：心理侧写升级为三级体系（初级/高级/大师），对应解锁不同隐藏维度可见性；loyalty维度影响多人对质效果
+> **v1.2 变更**：心理侧写升级为三级体系（初级/高级/大师），对应解锁不同隐藏维度可见性；loyalty维度影响多人对质效果  
+> **v1.3 变更**：侧写显示当前动态值而非初始值、credibility不可见（侧写不显示）、7种性格+主副组合
 
 ## 前置依赖
 
@@ -164,7 +165,7 @@ def _use_tool(self, tool_name: str, content: str) -> List[UIEvent]:
 
 #### 工具1：心理侧写（三级体系）
 
-**设计**：心理侧写分为初级/高级/大师三档，每档解锁不同的隐藏维度可见性。每档各1次/局，使用时消耗1次对应档位。
+**设计**：心理侧写分为初级/高级/大师三档，每档解锁不同的隐藏维度可见性。每档各1次/局，使用时消耗1次对应档位。**侧写显示的是当前动态值而非初始值**，因此使用时机很重要——后期使用能看到维度被消磨后的状态。
 
 **可见性等级**：
 
@@ -173,6 +174,8 @@ def _use_tool(self, tool_name: str, content: str) -> List[UIEvent]:
 | 初级 | Lv.2 | personality + fear | 1次 |
 | 高级 | Lv.10 | + defiance + empathy_susceptibility | 1次 |
 | 大师 | Lv.15 | + deception_skill + loyalty | 1次 |
+
+**注意**：credibility 始终不可见，即使大师侧写也不显示。
 
 **注册3个工具**：
 
@@ -934,7 +937,7 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
 
 ## Phase 3 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.3 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | 工具架构 | 8个工具内嵌在引擎中 | 策略模式，各工具独立类 | P1：解耦，开闭原则 |
 | `psych_collapse` | 直接 `confession_level += 1` | 调用 `check_confession_upgrade` | P1：尊重升级约束 |
@@ -945,5 +948,7 @@ LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {
 | 心理侧写 | 单一工具 psych_profile | 三级体系：basic/advanced/master | P1：对应隐藏维度可见性 |
 | 工具总数 | 8个 | 10个（3个侧写 + 7个其他） | 增强：侧写分级更精细 |
 | dual_interrogation | 无loyalty逻辑 | loyalty维度影响多人对质效果 | P1：维度指标参与机制 |
+| 侧写显示值 | 静态初始值 | 当前动态值 | P1：体现维度动态变化 |
+| 性格类型 | 5种 | 7种+主副组合 | P1：更丰富心理画像 |
 
 (End of file - total 595 lines)

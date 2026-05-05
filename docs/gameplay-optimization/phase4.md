@@ -1,7 +1,8 @@
-# Phase 4：评分与难度 — 行为评分维度 + 错误惩罚 + LLM 评分 + 难度分级（优化版 v1.2）
+# Phase 4：评分与难度 — 行为评分维度 + 错误惩罚 + LLM 评分 + 难度分级（优化版 v1.3）
 
 > **评审变更**：evidence_usage改为相关证据占比、best_grade数值映射、memory_summary截断、confession_depth非线性映射、难度解锁节奏说明  
-> **v1.2 变更**：评分系统增加3个行为过程维度（施压精准度、证据精准度、错误惩罚），mistake_log数据联动评分
+> **v1.2 变更**：评分系统增加3个行为过程维度（施压精准度、证据精准度、错误惩罚），mistake_log数据联动评分  
+> **v1.3 变更**：新增反扑惩罚评分（反扑触发时额外扣分），credibility变化纳入策略评分参考
 
 ## 前置依赖
 
@@ -138,9 +139,12 @@ def calculate_score(session_data: Dict[str, Any]) -> Dict[str, Any]:
     mistake_log = session_data.get("mistake_log", [])
     mistake_count = len(mistake_log)
     innocent_breakdown = any(m.get("type") == "innocent_breakdown" for m in mistake_log)
+    proactive_triggered = session_data.get("proactive_triggered_count", 0)
     mistake_score = max(0, 100 - mistake_count * 15)
     if innocent_breakdown:
         mistake_score = max(0, mistake_score - 30)  # 无辜崩溃额外扣30
+    if proactive_triggered > 0:
+        mistake_score = max(0, mistake_score - proactive_triggered * 5)  # 反扑触发扣5/次
     scores["mistake_penalty"] = mistake_score
 
     # ── LLM 判断的维度 ──
@@ -457,7 +461,7 @@ function updateDifficultyOptions(playerLevel) {
 
 ## Phase 4 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.3 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | `evidence_usage` | 出示数/总证据数 | 出示数/相关证据数 | P1：更准确反映策略 |
 | `confession_depth` | `level * 25`（线性） | 非线性映射（0=15,1=40,2=65,3=85,4=100） | P2：缩小层级间差距 |
@@ -466,6 +470,7 @@ function updateDifficultyOptions(playerLevel) {
 | 难度解锁节奏 | 未说明 | 明确各阶段预计局数和时间 | 增强：帮助设计验证 |
 | 评分维度 | 5维（纯结果+LLM） | 8维（结果3+行为3+LLM2） | P0：增加行为过程统计 |
 | 错误惩罚 | 无 | mistake_log 联动评分 | P1：错误操作有后果 |
+| 反扑惩罚 | 无 | 反扑触发次数扣5/次 | P1：反扑是操作失误的信号 |
 | 评分面板 | 简单列表 | 分组展示（结果/行为/策略） | 增强：复盘信息更丰富 |
 
 (End of file - total 324 lines)

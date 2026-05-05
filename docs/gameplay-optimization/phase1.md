@@ -1,7 +1,8 @@
-# Phase 1：基础重构 — 证据系统 + 供词层级 + 恐惧值 + 多维隐藏指标 + 交互限制（优化版 v1.2）
+# Phase 1：基础重构 — 证据系统 + 供词层级 + 恐惧值 + 多维隐藏指标 + 交互限制（优化版 v1.3）
 
 > **评审变更**：修复P0 `_postprocess`冲突、抽取`_call_llm()`、统一胜利入口`_check_victory()`、压力程序化计算、移除`requires_semantic`、game_config分阶段配置  
-> **v1.2 变更**：新增恐惧值系统、嫌疑人5维隐藏指标、施压/共情交互限制（混合方案）、聊天轮次限制
+> **v1.2 变更**：新增恐惧值系统、嫌疑人5维隐藏指标、施压/共情交互限制（混合方案）、聊天轮次限制  
+> **v1.3 变更**：全维度动态变化机制、主+副性格组合、反扑机制、维度边界与联动规则，详见 [`suspect-dimensions.md`](suspect-dimensions.md)
 
 ## 目标
 
@@ -111,20 +112,64 @@ DEFAULT_FEAR = 50  # 0-100
 # 实际压力增量 = 基础压力增量 × (fear / FEAR_NEUTRAL)
 FEAR_NEUTRAL = 50  # fear=50时效果正常
 
-# 错误证据出示的恐惧惩罚
-FEAR_PENALTY_WRONG_EVIDENCE = 10  # 出示错误证据 fear -= 10
+# 恐惧自然冷却
+FEAR_NATURAL_DECAY_RATE = -1  # 每5秒 -1
+
+# 反扑：恐惧极低阈值
+FEAR_PROVOCATION_THRESHOLD = 15  # fear<15 触发挑衅态度
 
 # ──────────────────────────────────────────────
 # 嫌疑人多维隐藏指标
 # ──────────────────────────────────────────────
 
-# 隐藏维度定义（各维度 0-100，不同性格/角色分配不同值）
-HIDDEN_DIMENSIONS = {
-    "fear":                  {"default": 50, "desc": "恐惧值：对审讯员的畏惧感，影响施压效果增益"},
-    "defiance":              {"default": 50, "desc": "抗压性：压力增长速率 = base / (1 + defiance × 0.01)"},
-    "empathy_susceptibility": {"default": 50, "desc": "共情易感性：共情效果倍率 = empathy / 50"},
-    "deception_skill":       {"default": 50, "desc": "欺骗技巧：反驳成功率加成"},
-    "loyalty":               {"default": 50, "desc": "忠诚度：对同伙的忠诚，多人对质时影响是否背叛"},
+# 维度边界
+DIMENSION_BOUNDS = {
+    "fear":                  {"min": 0,   "max": 100},
+    "defiance":              {"min": 5,   "max": 100},  # 最低5，不归零
+    "empathy_susceptibility": {"min": 0,   "max": 95},   # 最高95，保留一点抵抗
+    "deception_skill":       {"min": 5,   "max": 100},  # 最低5，保留基础撒谎能力
+    "loyalty":               {"min": 0,   "max": 100},
+    "credibility":           {"min": 0,   "max": 100},
+}
+
+# 性格维度映射（7种性格，v1.3新增忠诚/孤僻）
+PERSONALITY_DIMENSIONS = {
+    "冷静":  {"fear": 30, "defiance": 70, "empathy_susceptibility": 30, "deception_skill": 60, "loyalty": 50},
+    "暴躁":  {"fear": 60, "defiance": 30, "empathy_susceptibility": 50, "deception_skill": 20, "loyalty": 40},
+    "狡猾":  {"fear": 40, "defiance": 50, "empathy_susceptibility": 20, "deception_skill": 80, "loyalty": 30},
+    "胆小":  {"fear": 80, "defiance": 20, "empathy_susceptibility": 70, "deception_skill": 10, "loyalty": 60},
+    "固执":  {"fear": 35, "defiance": 80, "empathy_susceptibility": 15, "deception_skill": 30, "loyalty": 70},
+    "忠诚":  {"fear": 40, "defiance": 40, "empathy_susceptibility": 60, "deception_skill": 20, "loyalty": 90},
+    "孤僻":  {"fear": 45, "defiance": 60, "empathy_susceptibility": 10, "deception_skill": 50, "loyalty": 20},
+}
+
+# 性格组合权重
+PERSONALITY_PRIMARY_WEIGHT = 0.7
+PERSONALITY_SECONDARY_WEIGHT = 0.3
+
+# 每轮维度联动（在 submit_action 末尾执行）
+DIMENSION_PER_TURN_EFFECTS = {
+    "pressure_gt_60": {"defiance": -1},
+    "pressure_lt_30": {"defiance": +1},
+    "pressure_gt_70": {"deception_skill": -2},
+    "fear_gt_70":     {"defiance": -2, "deception_skill": -3, "loyalty": -2},
+    "fear_gt_60":     {"empathy_susceptibility": +1},
+    "fear_lt_15":     {"defiance": +2},  # 挑衅反扑
+    "defiance_gt_70": {"empathy_susceptibility": -1},
+}
+
+# 反扑触发条件
+PROACTIVE_TRIGGERS = {
+    "counter_attack": {"condition": "consecutive_rebuttal_success >= 2",
+                       "effects": {"fear": +10, "defiance": +3}},
+    "gloat":          {"condition": "rebuttal_believable == True",
+                       "effects": {"fear": -5, "deception_skill": +1, "confession_progress": -0.05}},
+    "provocation":    {"condition": "fear < 15",
+                       "effects_per_turn": {"pressure": -2, "defiance": +2}},
+    "probe":          {"condition": "pressure > 40 and fear < 20",
+                       "effects_on_fail": {"fear": -10}},
+    "recover":        {"condition": "consecutive_idle_turns >= 3",
+                       "effects": {"defiance": +3, "fear": -5, "deception_skill": +2}},
 }
 
 # 可见性等级（玩家等级 → 可见维度）
@@ -135,15 +180,6 @@ DIMENSION_VISIBILITY = {
          "defiance", "empathy_susceptibility"],                              # Lv.10+: 高级侧写
     15: ["pressure", "confession_level", "personality", "fear",
          "defiance", "empathy_susceptibility", "deception_skill", "loyalty"], # Lv.15+: 大师侧写
-}
-
-# 性格类型 → 隐藏维度默认值映射
-PERSONALITY_DIMENSIONS = {
-    "冷静":  {"fear": 30, "defiance": 70, "empathy_susceptibility": 30, "deception_skill": 60, "loyalty": 50},
-    "暴躁":  {"fear": 60, "defiance": 30, "empathy_susceptibility": 50, "deception_skill": 20, "loyalty": 40},
-    "狡猾":  {"fear": 40, "defiance": 50, "empathy_susceptibility": 20, "deception_skill": 80, "loyalty": 30},
-    "胆小":  {"fear": 80, "defiance": 20, "empathy_susceptibility": 70, "deception_skill": 10, "loyalty": 60},
-    "固执":  {"fear": 35, "defiance": 80, "empathy_susceptibility": 15, "deception_skill": 30, "loyalty": 70},
 }
 
 # ──────────────────────────────────────────────
@@ -958,11 +994,12 @@ def _get_system_message(self) -> dict:
             "knowledge": {"type": "string"},
             "forbidden_to_reveal": {"type": "array", "items": {"type": "string"}},
             "personality": {"type": "string"},
+            "personality_secondary": {"type": "string"},  # v1.3: 主+副性格组合
             # 新增隐藏维度（可选，向后兼容）
             "fear": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
-            "defiance": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
-            "empathy_susceptibility": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
-            "deception_skill": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+            "defiance": {"type": "integer", "minimum": 5, "maximum": 100, "default": 50},
+            "empathy_susceptibility": {"type": "integer", "minimum": 0, "maximum": 95, "default": 50},
+            "deception_skill": {"type": "integer", "minimum": 5, "maximum": 100, "default": 50},
             "loyalty": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
         },
         "additionalProperties": False,
@@ -978,11 +1015,12 @@ def _get_system_message(self) -> dict:
 
 修改生成提示词，在 suspects 部分增加：
 ```
+"personality_secondary": "字符串，副性格类型（可选）：冷静/暴躁/狡猾/胆小/固执/忠诚/孤僻。与主性格组合形成更丰富的心理画像。如果缺失则按主性格100%计算。",
 "fear": "整数0-100，恐惧值，胆小性格80+，冷静性格20-40",
-"defiance": "整数0-100，抗压性，固执性格80+，胆小性格20-30",
-"empathy_susceptibility": "整数0-100，共情易感性，胆小/暴躁性格50+，狡猾性格20-30",
-"deception_skill": "整数0-100，欺骗技巧，狡猾性格80+，胆小/暴躁性格10-30",
-"loyalty": "整数0-100，对同伙的忠诚度，固执/胆小性格60+，狡猾性格20-40",
+"defiance": "整数5-100，抗压性，固执性格80+，胆小性格20-30。最低5不归零",
+"empathy_susceptibility": "整数0-95，共情易感性，胆小/暴躁性格50+，狡猾性格20-30。最高95保留一点抵抗",
+"deception_skill": "整数5-100，欺骗技巧，狡猾性格80+，胆小/暴躁性格10-30。最低5保留基础撒谎能力",
+"loyalty": "整数0-100，对同伙的忠诚度，固执/忠诚性格70+，狡猾性格20-40",
 ```
 
 ---
@@ -991,10 +1029,13 @@ def _get_system_message(self) -> dict:
 
 ### 设计
 
-恐惧值(fear)是嫌疑人对审讯员的畏惧感指标，与压力值(pressure)交互：
-- **恐惧影响施压效果**：实际压力增量 = 基础压力增量 × (fear / 50)
-- **错误证据导致恐惧下降**：出示与当前嫌疑人无关的证据 → fear -= 10
+恐惧值(fear)是嫌疑人对审讯员的畏惧感指标，与压力值交互：
+- **恐惧影响施压效果**：实际压力增量 = 基础压力增量 × (fear / 50) × defiance系数
 - **恐惧过低时施压效果极弱**：fear=10 时施压效果仅为正常的20%
+- **恐惧极低触发反扑**：fear<15 时嫌疑人转为挑衅态度（pressure每轮-2, defiance每轮+2）
+- **恐惧动态变化**：恐惧不是静态值，随操作和状态持续变化
+
+完整恐惧值定义和触发器详见 [`suspect-dimensions.md`](suspect-dimensions.md) §3。
 
 ### 修改 `core/suspect_agent.py` — 新增恐惧值属性
 
@@ -1004,9 +1045,32 @@ def _get_system_message(self) -> dict:
 self.fear: int = suspect_data.get("fear", 50)
 ```
 
-### 修改 `core/interrogation.py` — 错误证据恐惧惩罚
+### 修改 `core/interrogation.py` — 恐惧值动态变化
 
-已在 1.2.5 中实现（出示错误证据时 `suspect.fear -= FEAR_PENALTY_WRONG_EVIDENCE`）。
+在 `submit_action` 中实现恐惧值的完整触发逻辑：
+
+```python
+from core.game_config import FEAR_NEUTRAL, DIMENSION_BOUNDS
+
+# 出示正确证据 → fear+5
+if evidence.get("related_suspect") == suspect.name:
+    suspect.fear = min(DIMENSION_BOUNDS["fear"]["max"], suspect.fear + 5)
+
+# 出示错误证据 → fear-10
+else:
+    suspect.fear = max(DIMENSION_BOUNDS["fear"]["min"], suspect.fear - 10)
+    self.mistake_log.append({...})
+
+# 施压成功(对真凶) → fear+5
+# 施压失败(对无辜者) → fear-5
+# 共情 → fear -10 × (empathy/50)
+# 对真凶共情(错误) → fear+5
+# 反驳成功 → fear-5
+# 反扑:反击质问 → fear+10
+# 被同伴出卖 → fear+10
+```
+
+恐惧自然冷却在 `tick()` 中实现（每5秒 -1）。
 
 ### 新增事件类型
 
@@ -1082,10 +1146,27 @@ fear_update = Signal(int, int, str)  # suspect_index, fear_value, reason
 
 ### 设计
 
-每个嫌疑人拥有5个隐藏心理维度，这些维度：
-- **影响游戏机制**：恐惧影响施压效果、抗压性影响压力增长速率、共情易感性影响共情效果等
+每个嫌疑人拥有6个隐藏心理维度（+2个可见维度 = 8指标）：
+- **全部动态变化**：所有隐藏维度随审讯过程动态变化，不是初始化后不变的死值
+- **维度间联动**：维度之间互相影响，形成正/负反馈循环
 - **默认不可见**：玩家只能看到 pressure 和 confession_level
 - **按等级解锁可见**：使用心理侧写技能可逐步解锁（详见 Phase 3a 三级侧写体系）
+- **有边界约束**：各维度有 min/max 边界，不会无限增长或归零
+
+完整维度定义、触发器和联动规则详见 [`suspect-dimensions.md`](suspect-dimensions.md)。
+
+### 8个指标总览
+
+| 指标 | 可见性 | 值域 | 初始值 | 动态性 |
+|------|--------|------|--------|--------|
+| pressure | 始终可见 | 0-100 | 20（固定） | 高度动态 |
+| confession_level | 始终可见 | 0-4 | 0 | 阶梯升级 |
+| fear | Lv.2+ | 0-100 | 性格计算 | 高度动态 |
+| defiance | Lv.10+ | 5-100 | 性格计算 | 中度动态 |
+| empathy_susceptibility | Lv.10+ | 0-95 | 性格计算 | 中度动态 |
+| deception_skill | Lv.15+ | 5-100 | 性格计算 | 中度动态 |
+| loyalty | Lv.15+ | 0-100 | 性格计算 | 中度动态 |
+| credibility | 不可见 | 0-100 | 50 | 低度动态 |
 
 ### 修改 `core/suspect_agent.py` — 新增隐藏维度属性
 
@@ -1096,41 +1177,73 @@ self.defiance: int = suspect_data.get("defiance", 50)
 self.empathy_susceptibility: int = suspect_data.get("empathy_susceptibility", 50)
 self.deception_skill: int = suspect_data.get("deception_skill", 50)
 self.loyalty: int = suspect_data.get("loyalty", 50)
+self.credibility: int = 50  # 不可见，固定初始值
 ```
 
-如果 `suspect_data` 中没有提供维度值，根据 `personality` 字段从 `PERSONALITY_DIMENSIONS` 查找默认值：
+如果 `suspect_data` 中没有提供维度值，根据主+副性格字段从 `PERSONALITY_DIMENSIONS` 查找并加权计算：
 
 ```python
-from core.game_config import PERSONALITY_DIMENSIONS
+from core.game_config import (
+    PERSONALITY_DIMENSIONS,
+    PERSONALITY_PRIMARY_WEIGHT,
+    PERSONALITY_SECONDARY_WEIGHT,
+)
 
-personality = suspect_data.get("personality", "")
-dim_defaults = PERSONALITY_DIMENSIONS.get(personality, {})
+primary = suspect_data.get("personality", "")
+secondary = suspect_data.get("personality_secondary", "")
+primary_dims = PERSONALITY_DIMENSIONS.get(primary, {})
+secondary_dims = PERSONALITY_DIMENSIONS.get(secondary, {})
 
-self.fear = suspect_data.get("fear", dim_defaults.get("fear", 50))
-self.defiance = suspect_data.get("defiance", dim_defaults.get("defiance", 50))
-self.empathy_susceptibility = suspect_data.get("empathy_susceptibility", dim_defaults.get("empathy_susceptibility", 50))
-self.deception_skill = suspect_data.get("deception_skill", dim_defaults.get("deception_skill", 50))
-self.loyalty = suspect_data.get("loyalty", dim_defaults.get("loyalty", 50))
+if primary_dims and secondary_dims:
+    # 主+副性格加权
+    for dim in ["fear", "defiance", "empathy_susceptibility", "deception_skill", "loyalty"]:
+        calculated = primary_dims.get(dim, 50) * PERSONALITY_PRIMARY_WEIGHT + \
+                     secondary_dims.get(dim, 50) * PERSONALITY_SECONDARY_WEIGHT
+        setattr(self, dim, suspect_data.get(dim, int(calculated)))
+elif primary_dims:
+    # 仅主性格
+    for dim in primary_dims:
+        setattr(self, dim, suspect_data.get(dim, primary_dims[dim]))
 ```
 
-### 维度对游戏机制的影响
+### 修改 `core/interrogation.py` — 每轮维度联动
 
-| 维度 | 影响的机制 | 公式/规则 |
-|------|-----------|----------|
-| `fear` | 施压效果增益 | `实际压力增量 = 基础增量 × (fear / 50)` |
-| `defiance` | 压力增长速率 | `实际压力增量 = 基础增量 / (1 + defiance × 0.01)` |
-| `empathy_susceptibility` | 共情效果 | `共情压力减少 = 基础减少 × (empathy / 50)` （Phase 2 实现） |
-| `deception_skill` | 反驳成功率加成 | `rebuttal_believable` 判定时 `pressure_threshold -= deception_skill × 0.2` （Phase 2 实现） |
-| `loyalty` | 多人对质效果 | `pressure > loyalty` 时可能背叛同伙 （Phase 3a 实现） |
-
-**综合公式**（施压时）：
+在 `submit_action` 末尾新增每轮维度联动检查：
 
 ```python
-# 证据出示的实际压力增量
-raw_delta = base * (1 + strength * STRENGTH_MULTIPLIER) + chain_bonus
-fear_factor = suspect.fear / FEAR_NEUTRAL
-defiance_factor = 1.0 / (1.0 + suspect.defiance * 0.01)
-pressure_delta = int(raw_delta * fear_factor * defiance_factor)
+def _apply_dimension_per_turn_effects(self, suspect) -> List[UIEvent]:
+    """每轮维度联动效果。"""
+    from core.game_config import DIMENSION_PER_TURN_EFFECTS, DIMENSION_BOUNDS
+    
+    changes = {}
+    
+    if suspect.pressure > 60:
+        changes["defiance"] = changes.get("defiance", 0) - 1
+    if suspect.pressure < 30:
+        changes["defiance"] = changes.get("defiance", 0) + 1
+    if suspect.pressure > 70:
+        changes["deception_skill"] = changes.get("deception_skill", 0) - 2
+    if suspect.fear > 70:
+        changes["defiance"] = changes.get("defiance", 0) - 2
+        changes["deception_skill"] = changes.get("deception_skill", 0) - 3
+        changes["loyalty"] = changes.get("loyalty", 0) - 2
+    if suspect.fear > 60:
+        changes["empathy_susceptibility"] = changes.get("empathy_susceptibility", 0) + 1
+    if suspect.fear < 15:
+        changes["defiance"] = changes.get("defiance", 0) + 2
+    if suspect.defiance > 70:
+        changes["empathy_susceptibility"] = changes.get("empathy_susceptibility", 0) - 1
+    
+    # 应用变化（受边界约束）
+    for dim, delta in changes.items():
+        if delta == 0:
+            continue
+        old_val = getattr(suspect, dim)
+        bounds = DIMENSION_BOUNDS.get(dim, {"min": 0, "max": 100})
+        new_val = max(bounds["min"], min(bounds["max"], old_val + delta))
+        setattr(suspect, dim, new_val)
+    
+    return []  # 维度变化事件可选发送
 ```
 
 ### 序列化
@@ -1149,6 +1262,7 @@ pressure_delta = int(raw_delta * fear_factor * defiance_factor)
     "empathy_susceptibility": suspect.empathy_susceptibility,
     "deception_skill": suspect.deception_skill,
     "loyalty": suspect.loyalty,
+    "credibility": suspect.credibility,
 }
 
 # from_dict 中:
@@ -1157,6 +1271,7 @@ engine.suspects[i].defiance = suspect_state.get("defiance", 50)
 engine.suspects[i].empathy_susceptibility = suspect_state.get("empathy_susceptibility", 50)
 engine.suspects[i].deception_skill = suspect_state.get("deception_skill", 50)
 engine.suspects[i].loyalty = suspect_state.get("loyalty", 50)
+engine.suspects[i].credibility = suspect_state.get("credibility", 50)
 ```
 
 ---
@@ -1343,7 +1458,7 @@ engine.mistake_log = state.get("mistake_log", [])
 
 ## Phase 1 评审后关键变更对照表
 
-| 变更项 | v1.0 原方案 | v1.2 优化方案 | 原因 |
+| 变更项 | v1.0 原方案 | v1.3 优化方案 | 原因 |
 |--------|------------|--------------|------|
 | `_postprocess` | 原样保留，触发即胜利 | 低供词层级拦截，>=3才触发 | P0：防止绕过供词系统 |
 | 压力来源 | LLM返回`pressure_change`+引擎硬编码+20 | 引擎程序化计算，LLM不返回 | P1：避免双重计算 |
@@ -1351,9 +1466,14 @@ engine.mistake_log = state.get("mistake_log", [])
 | 胜利判定 | 分散在`submit_action`中 | 统一`_check_victory()`入口 | P1：避免双重判定 |
 | `requires_semantic` | 定义在阈值中但无实现 | Phase 1移除，Phase 2实现 | P1：避免未完成的功能 |
 | `game_config.py` | 包含Phase 1-4所有配置 | 仅Phase 1配置，后续分阶段添加 | P2：减少早期测试负担 |
-| 嫌疑人维度 | 仅 pressure/confession | 新增恐惧值+5维隐藏指标 | P0：增加个体差异和策略深度 |
+| 嫌疑人维度 | 仅 pressure/confession | 8指标(2可见+6隐藏) | P0：增加个体差异和策略深度 |
 | 施压效果 | 固定公式计算 | fear × defiance 综合系数 | P0：恐惧影响施压，错误操作有惩罚 |
 | 交互限制 | 无限制 | 聊天10轮/人 + 施压1次/人 + 共情1次/人 | P0：避免无限试错 |
 | 错误操作 | 无惩罚 | fear-10 + mistake_log 记录 | P1：增加策略博弈 |
+| 隐藏维度 | 初始化后不变 | 全维度动态变化+维度联动 | P0：维度间正/负反馈循环 |
+| 性格系统 | 5种离散类型 | 7种+主副组合(0.7+0.3加权) | P1：更丰富心理画像 |
+| 维度边界 | 无 | 各维度min/max约束 | P1：defiance最低5等 |
+| 反扑机制 | 无 | 5种反扑行为 | P0：嫌疑人主动博弈 |
+| credibility | 无 | 新增不可见属性，影响反驳判定 | 增强：辅助程序化判定 |
 
 (End of file - total 643 lines)
