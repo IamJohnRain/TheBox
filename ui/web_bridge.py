@@ -85,6 +85,11 @@ class WebBridge(QObject):
     case_generation_complete = Signal(dict)  # case_data
     case_generation_error = Signal(str)  # error_message
 
+    # 供词和恐惧更新
+    confession_update = Signal(int, int, float)  # suspect_index, level, progress
+    fear_update = Signal(int, int, str)  # suspect_index, fear_value, reason
+    interaction_limits_update = Signal(int, int, int, int)  # suspect_index, chat, pressure, empathy
+
     # === JS → Python 槽 ===
 
     @Slot(str)

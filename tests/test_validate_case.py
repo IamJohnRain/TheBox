@@ -29,6 +29,7 @@ VALID_CASE = {
     "cause_of_death": "钝器击打",
     "crime_scene": "村口工具房",
     "truth": "邻居李四因怨恨老张，争执中用锄头打死老张。",
+    "culprit_name": "李四",
     "suspects": [
         {
             "name": "李四",
@@ -60,6 +61,7 @@ MISSING_MOTIVE_CASE = {
     "cause_of_death": "钝器击打",
     "crime_scene": "工厂仓库",
     "truth": "工人赵六和陈明在仓库争执中用铁锤击打陈明头部致死。",
+    "culprit_name": "赵六",
     "suspects": [
         {
             "name": "赵六",
@@ -91,6 +93,7 @@ MULTIPLE_CULPRIT_CASE = {
     "cause_of_death": "中毒",
     "crime_scene": "茶馆后院",
     "truth": "伙计孙八因怨恨钱掌柜，争执中用毒药毒死了钱掌柜。",
+    "culprit_name": "孙八",
     "suspects": [
         {
             "name": "孙八",

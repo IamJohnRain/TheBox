@@ -174,6 +174,18 @@ class WebBridge {
             this._trigger('showCaseBriefing', { data });
         });
 
+        this.pythonBridge.confession_update.connect((suspectIndex, level, progress) => {
+            this._trigger('confessionUpdate', { suspectIndex, level, progress });
+        });
+
+        this.pythonBridge.fear_update.connect((suspectIndex, fear, reason) => {
+            this._trigger('fearUpdate', { suspectIndex, fear, reason });
+        });
+
+        this.pythonBridge.interaction_limits_update.connect((suspectIndex, chat, pressure, empathy) => {
+            this._trigger('interactionLimitsUpdate', { suspectIndex, chat, pressure, empathy });
+        });
+
         console.log('[WebBridge] Signal listeners setup complete');
     }
 

@@ -5,25 +5,39 @@
   "cause_of_death": "头部钝器击打",
   "crime_scene": "工具房内，锄头沾血",
   "truth": "邻居李四因偷花被老张发现，争执中用锄头打死老张。",
+  "culprit_name": "李四",
   "suspects": [
     {
       "name": "李四",
       "role": "邻居",
-      "personality": "脾气暴躁，不爱说话",
+      "personality": "暴躁",
+      "personality_secondary": "孤僻",
       "knowledge": "我讨厌老张，他总说我偷花。那天晚上我去找他理论，他拿锄头威胁我，我夺过来不小心打中了他。",
-      "forbidden_to_reveal": ["我打的", "锄头", "打死"]
+      "forbidden_to_reveal": ["我打的", "锄头", "打死"],
+      "hidden_fear": 60,
+      "hidden_defiance": 30,
+      "hidden_empathy_susceptibility": 50,
+      "hidden_deception_skill": 20,
+      "hidden_loyalty": 40,
+      "hidden_credibility": 50
     },
     {
       "name": "王芳",
       "role": "老张妻子",
-      "personality": "懦弱，胆小",
+      "personality": "胆小",
       "knowledge": "那天我不在家，回家后发现老张死了。李四浑身是泥，非常可疑。",
-      "forbidden_to_reveal": ["我杀的", "我恨他"]
+      "forbidden_to_reveal": ["我杀的", "我恨他"],
+      "hidden_fear": 80,
+      "hidden_defiance": 20,
+      "hidden_empathy_susceptibility": 70,
+      "hidden_deception_skill": 10,
+      "hidden_loyalty": 60,
+      "hidden_credibility": 70
     }
   ],
   "evidences": [
-    {"id": "e1", "name": "沾血的锄头", "description": "锄头上有血迹和指纹", "related_suspect": "李四"},
-    {"id": "e2", "name": "李四的泥脚印", "description": "从李四家门口延伸到工具房", "related_suspect": "李四"}
+    {"id": "e1", "name": "沾血的锄头", "description": "锄头上有血迹和指纹", "type": "physical", "strength": 8, "related_suspect": "李四"},
+    {"id": "e2", "name": "李四的泥脚印", "description": "从李四家门口延伸到工具房", "type": "physical", "strength": 6, "related_suspect": "李四"}
   ],
   "interrogation_time_limit_sec": 600
 }

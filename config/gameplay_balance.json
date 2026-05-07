@@ -1,0 +1,132 @@
+{
+  "config_version": 1,
+  "confession": {
+    "levels": {
+      "0": {"name": "否认", "desc": "完全否认一切"},
+      "1": {"name": "动摇", "desc": "情绪波动，出现紧张、回避"},
+      "2": {"name": "部分承认", "desc": "承认部分事实，但隐瞒关键"},
+      "3": {"name": "关键突破", "desc": "透露动机/手段/时机之一"},
+      "4": {"name": "完全崩溃", "desc": "完整供述真相"}
+    },
+    "thresholds": {
+      "0": {"pressure": 40, "min_turns": 3, "requires_evidence": false},
+      "1": {"pressure": 55, "min_turns": 5, "requires_evidence": true},
+      "2": {"pressure": 70, "min_turns": 7, "requires_evidence": true},
+      "3": {"pressure": 85, "min_turns": 10, "requires_evidence": true}
+    },
+    "pressure_window": 5,
+    "progress_rate": {"low": 0.02, "medium": 0.05, "high": 0.10, "panic": 0.15}
+  },
+  "pressure": {
+    "initial": 20,
+    "segments": {"low": [0, 30], "medium": [30, 60], "high": [60, 80], "panic": [80, 100]},
+    "soft_factor": {"min": 0.3, "max": 1.5},
+    "per_turn": {"decay_zone": [0, 30], "decay_rate": -1, "stable_zone": [30, 70], "stable_rate": 0, "growth_zone": [70, 100], "growth_rate": 1, "floor": 15}
+  },
+  "evidence": {
+    "default_uses": 4,
+    "pressure_base": {"physical": 18, "document": 12, "testimony": 9},
+    "strength_multiplier": 0.1,
+    "fear_delta": {"correct": 8, "wrong": -10},
+    "chain_bonus": 10
+  },
+  "fear": {
+    "default": 50,
+    "neutral": 50,
+    "per_turn_decay": -1,
+    "provocation_threshold": 15
+  },
+  "dimensions": {
+    "bounds": {
+      "fear": {"min": 0, "max": 100},
+      "defiance": {"min": 5, "max": 100},
+      "empathy_susceptibility": {"min": 0, "max": 95},
+      "deception_skill": {"min": 5, "max": 100},
+      "loyalty": {"min": 0, "max": 100},
+      "credibility": {"min": 0, "max": 100}
+    },
+    "personality_weights": {"primary": 0.7, "secondary": 0.3},
+    "personality_dimensions": {
+      "胆小": {"fear": 80, "defiance": 20, "empathy_susceptibility": 70, "deception_skill": 15, "loyalty": 40},
+      "冷静": {"fear": 30, "defiance": 40, "empathy_susceptibility": 40, "deception_skill": 70, "loyalty": 50},
+      "暴躁": {"fear": 40, "defiance": 80, "empathy_susceptibility": 20, "deception_skill": 25, "loyalty": 30},
+      "孤僻": {"fear": 50, "defiance": 60, "empathy_susceptibility": 30, "deception_skill": 55, "loyalty": 70},
+      "狡猾": {"fear": 25, "defiance": 50, "empathy_susceptibility": 20, "deception_skill": 85, "loyalty": 20},
+      "忠诚": {"fear": 45, "defiance": 30, "empathy_susceptibility": 60, "deception_skill": 30, "loyalty": 90},
+      "脆弱": {"fear": 75, "defiance": 15, "empathy_susceptibility": 80, "deception_skill": 10, "loyalty": 35},
+      "固执": {"fear": 35, "defiance": 85, "empathy_susceptibility": 25, "deception_skill": 40, "loyalty": 60}
+    }
+  },
+  "interaction_limits": {
+    "chat_turns_per_suspect": 12,
+    "pressure_uses_per_suspect": 2,
+    "empathy_uses_per_suspect": 2,
+    "second_use_multiplier": 0.5
+  },
+  "action_points": {
+    "default_total": 22,
+    "costs": {"chat": 1, "pressure": 2, "empathy": 2, "present_evidence": 2},
+    "penalties": {"wrong_evidence": 2, "wrong_pressure": 1, "wrong_empathy": 1, "innocent_breakdown": 3}
+  },
+  "rebuttal": {
+    "pressure_threshold_hard": 80,
+    "pressure_threshold_soft": 60,
+    "credibility_bonus_success": 10,
+    "credibility_penalty_fail": 5,
+    "deception_threshold_base": 80,
+    "deception_threshold_scale": 0.2
+  },
+  "proactive_speech": {
+    "pressure_threshold": 70,
+    "turn_interval": 5,
+    "probability_divisor": 300
+  },
+  "tools": {
+    "definitions": {
+      "psych_profile_basic": {"display_name": "心理侧写（初级）", "max_uses": 1, "unlock_level": 2, "cost_ap": 0},
+      "psych_profile_advanced": {"display_name": "心理侧写（高级）", "max_uses": 1, "unlock_level": 10, "cost_ap": 0},
+      "psych_profile_master": {"display_name": "心理侧写（大师）", "max_uses": 1, "unlock_level": 15, "cost_ap": 0},
+      "silent_pressure": {"display_name": "沉默施压", "max_uses": 2, "unlock_level": 10, "cost_ap": 1},
+      "lie_detector": {"display_name": "测谎仪", "max_uses": 2, "unlock_level": 4, "cost_ap": 0},
+      "threat": {"display_name": "威胁", "max_uses": 1, "unlock_level": 14, "cost_ap": 0},
+      "dual_interrogation": {"display_name": "多人对质", "max_uses": 1, "unlock_level": 15, "cost_ap": 3},
+      "psych_collapse": {"display_name": "心理崩溃", "max_uses": 1, "unlock_level": 18, "cost_ap": 5}
+    }
+  },
+  "scoring": {
+    "outcome_caps": {"partial": 74, "fail": 59, "innocent_breakdown": 49},
+    "mistake_penalty": {
+      "weights": [15, 15, 10, 10],
+      "score_floor": 20
+    }
+  },
+  "difficulty": {
+    "presets": {
+      "easy": {"suspects": 2, "total_ap": 26, "evidence_uses": 4, "keywords": 3, "unlock_level": 1},
+      "normal": {"suspects": "2-3", "total_ap": 22, "evidence_uses": 4, "keywords": 2, "unlock_level": 5},
+      "hard": {"suspects": "3-4", "total_ap": 19, "evidence_uses": 4, "keywords": 2, "unlock_level": 10},
+      "nightmare": {"suspects": "4+", "total_ap": 16, "evidence_uses": 3, "keywords": 1, "unlock_level": 15}
+    }
+  },
+  "experience": {
+    "per_confession_level": 10,
+    "per_presented_evidence": 5,
+    "completion": 20
+  },
+  "progression": {
+    "experience_curve": [0, 50, 110, 180, 260, 350, 460, 580, 720, 880, 1060, 1260, 1480, 1720, 1980, 2260, 2560, 2880, 3220, 3580],
+    "level_unlocks": {
+      "1": {"tools": [], "evidence_uses": 4, "desc": "基础审讯"},
+      "2": {"tools": ["psych_profile_basic"], "evidence_uses": 4, "desc": "初级心理侧写"},
+      "4": {"tools": ["lie_detector"], "evidence_uses": 4, "desc": "测谎仪"},
+      "5": {"tools": [], "evidence_uses": 5, "desc": "证据次数+1"},
+      "10": {"tools": ["psych_profile_advanced", "silent_pressure"], "evidence_uses": 6, "desc": "高级侧写"},
+      "11": {"tools": [], "evidence_uses": 6, "ap_bonus": 2, "desc": "AP+2"},
+      "14": {"tools": ["threat"], "evidence_uses": 7, "desc": "威胁"},
+      "15": {"tools": ["psych_profile_master", "dual_interrogation"], "evidence_uses": 7, "desc": "大师侧写"},
+      "16": {"tools": [], "evidence_uses": 7, "ap_bonus": 2, "desc": "AP+2"},
+      "18": {"tools": ["psych_collapse"], "evidence_uses": 8, "desc": "心理崩溃"},
+      "20": {"tools": [], "evidence_uses": 8, "desc": "审讯大师"}
+    }
+  }
+}

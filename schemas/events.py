@@ -28,4 +28,19 @@ class TimerTickEvent(TypedDict):
     time_left: int
 
 
-UIEvent = Union[NewMessageEvent, SuspectUpdateEvent, StateChangeEvent, TimerTickEvent]
+class ConfessionUpdateEvent(TypedDict):
+    type: Literal["confession_update"]
+    suspect_index: int
+    confession_level: int
+    confession_progress: float
+    level_name: str
+
+
+class FearUpdateEvent(TypedDict):
+    type: Literal["fear_update"]
+    suspect_index: int
+    fear: int
+    reason: str  # "wrong_evidence" / "pressure_success" / "natural_decay"
+
+
+UIEvent = Union[NewMessageEvent, SuspectUpdateEvent, StateChangeEvent, TimerTickEvent, ConfessionUpdateEvent, FearUpdateEvent]

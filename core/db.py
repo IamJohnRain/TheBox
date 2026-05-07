@@ -12,42 +12,97 @@ DEFAULT_DB_PATH = "thebox.db"
 
 MAX_SLOTS = 5
 
+DB_VERSION = 2
+
 
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
+    """Initialize database with migration support.
+
+    Creates the db_version table and runs incremental migrations
+    from the current schema version to DB_VERSION.
+    """
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+
+        # 版本号表
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS cases (
-                case_id TEXT PRIMARY KEY,
-                title TEXT,
-                json_data TEXT,
-                created_at TIMESTAMP
+            CREATE TABLE IF NOT EXISTS db_version (
+                version INTEGER PRIMARY KEY
             )
         """
         )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                case_id TEXT,
-                current_state_json TEXT,
-                saved_at TIMESTAMP,
-                slot_number INTEGER
-            )
-        """
-        )
-        try:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN slot_number INTEGER")
-        except sqlite3.OperationalError:
-            pass
+
+        # 获取当前版本
+        cursor.execute("SELECT version FROM db_version LIMIT 1")
+        row = cursor.fetchone()
+        current_version = row[0] if row else 0
+
+        # 增量迁移
+        if current_version < 1:
+            _migrate_v0_to_v1(cursor)
+        if current_version < 2:
+            _migrate_v1_to_v2(cursor)
+
+        # 更新版本号
+        cursor.execute("DELETE FROM db_version")
+        cursor.execute("INSERT INTO db_version (version) VALUES (?)", (DB_VERSION,))
+
         conn.commit()
         conn.close()
-        logger.info(f"数据库初始化完成: {db_path}")
+        logger.info(f"数据库初始化完成 (v{current_version} -> v{DB_VERSION}): {db_path}")
     except sqlite3.Error as e:
         logger.error(f"数据库初始化失败: {e}")
         raise DatabaseError(f"数据库初始化失败: {e}") from e
+
+
+def _migrate_v0_to_v1(cursor):
+    """初始表结构 - cases 和 sessions。"""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cases (
+            case_id TEXT PRIMARY KEY,
+            title TEXT,
+            json_data TEXT,
+            created_at TIMESTAMP
+        )
+    """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            case_id TEXT,
+            current_state_json TEXT,
+            saved_at TIMESTAMP,
+            slot_number INTEGER
+        )
+    """
+    )
+    # 兼容旧库：如果 sessions 表缺少 slot_number 列则添加
+    try:
+        cursor.execute("ALTER TABLE sessions ADD COLUMN slot_number INTEGER")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _migrate_v1_to_v2(cursor):
+    """Phase 3b 新增 player_profile 表。"""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS player_profile (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            level INTEGER DEFAULT 1,
+            experience INTEGER DEFAULT 0,
+            total_sessions INTEGER DEFAULT 0,
+            successful_sessions INTEGER DEFAULT 0,
+            best_grade TEXT DEFAULT 'D',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+    )
 
 
 def save_case(case_dict: Dict, db_path: str = DEFAULT_DB_PATH) -> None:
@@ -204,7 +259,9 @@ def save_session_to_slot(
             import uuid
             session_id = str(uuid.uuid4())
             cursor.execute(
-                "INSERT INTO sessions (session_id, case_id, current_state_json, saved_at, slot_number) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO sessions "
+                "(session_id, case_id, current_state_json, saved_at, slot_number) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (
                     session_id,
                     case_id,
@@ -252,7 +309,9 @@ def list_all_slots(db_path: str = DEFAULT_DB_PATH) -> list:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT session_id, case_id, saved_at, slot_number FROM sessions WHERE slot_number IS NOT NULL ORDER BY slot_number"
+            "SELECT session_id, case_id, saved_at, slot_number "
+            "FROM sessions WHERE slot_number IS NOT NULL "
+            "ORDER BY slot_number"
         )
         rows = cursor.fetchall()
         conn.close()

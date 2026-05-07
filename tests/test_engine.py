@@ -22,6 +22,16 @@ class DummySuspectAgent:
         self._reply = reply
         self._pressure_change = pressure_change
         self._secret_triggered = secret_triggered
+        # Phase 1e: hidden dimensions
+        self.confession_level: int = 0
+        self.confession_progress: float = 0.0
+        self.turn_count: int = 0
+        self.fear: int = 50
+        self.defiance: int = 50
+        self.empathy_susceptibility: int = 50
+        self.deception_skill: int = 50
+        self.loyalty: int = 50
+        self.credibility: int = 50
 
     def respond(self, player_input: str, context: Optional[dict] = None) -> dict:
         """Return a fixed response dict."""
@@ -29,9 +39,29 @@ class DummySuspectAgent:
         self.memory.append({"role": "assistant", "content": self._reply})
         return {
             "reply": self._reply,
-            "pressure_change": self._pressure_change,
             "secret_triggered": self._secret_triggered,
         }
+
+    def respond_evidence(
+        self, evidence_description: str, evidence_type: str = "unknown"
+    ) -> dict:
+        """Return a fixed response dict for evidence presentation."""
+        self.memory.append({"role": "user", "content": f"[出示证据] {evidence_description}"})
+        self.memory.append({"role": "assistant", "content": self._reply})
+        return {
+            "reply": self._reply,
+            "secret_triggered": self._secret_triggered,
+            "rebuttal": False,
+            "rebuttal_believable": False,
+        }
+
+    def update_confession_progress(self) -> float:
+        """No-op for dummy agent."""
+        return self.confession_progress
+
+    def check_confession_upgrade(self, has_evidence: bool = False) -> Optional[int]:
+        """No-op for dummy agent."""
+        return None
 
 
 @pytest.fixture
@@ -146,7 +176,13 @@ class TestSubmitActionEmpathy:
         engine_with_dummies.select_suspect(0)
         engine_with_dummies.suspects[0].pressure = 2
         engine_with_dummies.submit_action("empathy", "别担心。")
-        assert engine_with_dummies.suspects[0].pressure == 0
+        # Per-turn dynamics enforce a pressure floor (default 15), so
+        # even though empathy would bring pressure to 0, the dynamics
+        # floor raises it back up. The key point is that the pressure
+        # doesn't go below 0 from the empathy action itself.
+        from core.game_config import PRESSURE_PER_TURN_DYNAMICS
+        floor = PRESSURE_PER_TURN_DYNAMICS["pressure_floor"]
+        assert engine_with_dummies.suspects[0].pressure >= floor
 
 
 class TestSubmitActionPresentEvidence:
@@ -159,7 +195,8 @@ class TestSubmitActionPresentEvidence:
         assert len(system_msgs) == 1
         assert "不存在" in system_msgs[0]["content"]
 
-    def test_valid_matching_evidence_increases_pressure_by_20(self, engine_with_dummies, simple_case):
+    def test_valid_matching_evidence_increases_pressure_programmatically(self, engine_with_dummies, simple_case):
+        """Presenting correct evidence increases pressure via programmatic calculation (not hardcoded +20)."""
         engine_with_dummies.select_suspect(0)
         suspect = engine_with_dummies.suspects[0]
         initial_pressure = suspect.pressure
@@ -168,7 +205,9 @@ class TestSubmitActionPresentEvidence:
         engine_with_dummies.submit_action(
             "present_evidence", "看看这个证据", evidence_id=matching_evidence["id"]
         )
-        assert suspect.pressure == initial_pressure + 20
+        # Pressure should increase but the exact amount is calculated programmatically
+        # based on evidence type, strength, fear, and defiance
+        assert suspect.pressure > initial_pressure
 
     def test_valid_matching_evidence_recorded(self, engine_with_dummies, simple_case):
         engine_with_dummies.select_suspect(0)
@@ -235,17 +274,33 @@ class TestTick:
 
 
 class TestSecretTriggered:
-    def test_secret_triggered_sets_breakdown(self, engine_with_dummies):
+    def test_secret_triggered_with_high_confession_sets_breakdown(self, engine_with_dummies):
+        """secret_triggered with high confession level should set breakdown state."""
         engine_with_dummies.select_suspect(0)
-        engine_with_dummies.suspects[0] = DummySuspectAgent(
+        suspect = DummySuspectAgent(
             name="李四", pressure=50, secret_triggered="我打的"
         )
+        suspect.confession_level = 3  # High enough to trigger victory
+        engine_with_dummies.suspects[0] = suspect
         events = engine_with_dummies.submit_action("chat", "是你干的吧？")
         assert engine_with_dummies.state == "breakdown"
         state_events = [e for e in events if e["type"] == "state_change"]
         assert len(state_events) == 1
         assert state_events[0]["new_state"] == "breakdown"
         assert "李四" in state_events[0]["verdict_reason"]
+
+    def test_secret_triggered_with_low_confession_no_breakdown(self, engine_with_dummies):
+        """secret_triggered with low confession level should NOT set breakdown state."""
+        engine_with_dummies.select_suspect(0)
+        suspect = DummySuspectAgent(
+            name="李四", pressure=50, secret_triggered="我打的"
+        )
+        # Default confession_level (0) should not trigger victory from secret
+        engine_with_dummies.suspects[0] = suspect
+        events = engine_with_dummies.submit_action("chat", "是你干的吧？")
+        assert engine_with_dummies.state == "interrogating"
+        state_events = [e for e in events if e["type"] == "state_change"]
+        assert len(state_events) == 0
 
     def test_no_secret_stays_interrogating(self, engine_with_dummies):
         engine_with_dummies.select_suspect(0)

@@ -279,4 +279,78 @@ class SuspectManager {
         if (this.btnPressure) this.btnPressure.disabled = !enabled;
         if (this.btnEmpathy) this.btnEmpathy.disabled = !enabled;
     }
+
+    /**
+     * 更新供词层级显示。
+     * @param {number} level - 供词层级（0-4）
+     * @param {number} progress - 当前层级进度（0-1）
+     */
+    updateConfession(level, progress) {
+        const levelNames = ['否认', '动摇', '部分承认', '关键突破', '完全崩溃'];
+        const nameEl = document.getElementById('confession-level-name');
+        if (nameEl) {
+            nameEl.textContent = levelNames[level] || '未知';
+        }
+
+        const barEl = document.getElementById('confession-bar');
+        if (barEl) {
+            const totalProgress = (level * 20) + (progress * 20);
+            barEl.style.width = Math.min(100, totalProgress) + '%';
+        }
+
+        const steps = document.querySelectorAll('.confession-step');
+        steps.forEach((step, i) => {
+            step.classList.toggle('active', i <= level);
+            step.classList.toggle('current', i === level);
+        });
+    }
+
+    /**
+     * 更新恐惧值显示。
+     * @param {number} fear - 恐惧值（0-100）
+     */
+    updateFear(fear) {
+        const valueEl = document.getElementById('fear-value');
+        if (valueEl) {
+            valueEl.textContent = fear;
+        }
+
+        const barEl = document.getElementById('fear-bar');
+        if (barEl) {
+            barEl.style.width = fear + '%';
+            // 颜色：低恐惧蓝色，中恐惧黄色，高恐惧红色
+            if (fear < 30) {
+                barEl.style.background = 'var(--color-info)';
+            } else if (fear < 70) {
+                barEl.style.background = 'var(--color-warning)';
+            } else {
+                barEl.style.background = 'var(--color-danger)';
+            }
+        }
+    }
+
+    /**
+     * 更新交互限制显示。
+     * @param {number} chat - 剩余聊天次数
+     * @param {number} pressure - 剩余施压次数
+     * @param {number} empathy - 剩余共情次数
+     */
+    updateInteractionLimits(chat, pressure, empathy) {
+        const chatEl = document.getElementById('chat-remaining');
+        const pressureEl = document.getElementById('pressure-remaining');
+        const empathyEl = document.getElementById('empathy-remaining');
+
+        if (chatEl) {
+            chatEl.textContent = '💬 ' + chat;
+            chatEl.classList.toggle('warning', chat <= 2);
+        }
+        if (pressureEl) {
+            pressureEl.textContent = '👊 ' + pressure;
+            pressureEl.classList.toggle('warning', pressure <= 0);
+        }
+        if (empathyEl) {
+            empathyEl.textContent = '🤝 ' + empathy;
+            empathyEl.classList.toggle('warning', empathy <= 0);
+        }
+    }
 }

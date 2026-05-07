@@ -454,6 +454,19 @@ class WebMainWindow(QMainWindow):
             elif event["type"] == "timer_tick":
                 self.bridge.update_timer.emit(event["time_left"])
 
+            elif event["type"] == "confession_update":
+                self.bridge.confession_update.emit(
+                    event["suspect_index"],
+                    event["confession_level"],
+                    event["confession_progress"]
+                )
+            elif event["type"] == "fear_update":
+                self.bridge.fear_update.emit(
+                    event["suspect_index"],
+                    event["fear"],
+                    event["reason"]
+                )
+
     def _handle_ending(self, state_event):
         """处理游戏结局。"""
         self._countdown_timer.stop()

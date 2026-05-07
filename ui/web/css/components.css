@@ -1489,3 +1489,160 @@ body.modal-open .typing-dot {
     border-color: var(--color-danger);
     color: var(--color-danger);
 }
+
+
+/* ==========================================================================
+   Confession Section (供词层级)
+   ========================================================================== */
+
+.confession-section {
+    padding: var(--space-3);
+    border-top: 1px solid var(--color-border);
+}
+
+.confession-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-2);
+}
+
+.confession-title {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+}
+
+.confession-level-name {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--color-primary);
+}
+
+.confession-bar-container {
+    height: 6px;
+    background: var(--color-bg-secondary);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: var(--space-2);
+}
+
+.confession-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-success), var(--color-warning), var(--color-danger));
+    transition: width 0.3s ease;
+    border-radius: 3px;
+}
+
+.confession-steps {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--color-text-tertiary);
+}
+
+.confession-step.active {
+    color: var(--color-primary);
+    font-weight: 600;
+}
+
+.confession-step.current {
+    color: var(--color-danger);
+}
+
+
+/* ==========================================================================
+   Fear Section (恐惧值)
+   ========================================================================== */
+
+.fear-section {
+    padding: var(--space-3);
+    border-top: 1px solid var(--color-border);
+}
+
+.fear-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-2);
+}
+
+.fear-title {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+}
+
+.fear-value {
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.fear-bar-container {
+    height: 6px;
+    background: var(--color-bg-secondary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.fear-bar {
+    height: 100%;
+    background: var(--color-warning);
+    transition: width 0.3s ease;
+    border-radius: 3px;
+}
+
+
+/* ==========================================================================
+   Interaction Limits (交互限制)
+   ========================================================================== */
+
+.interaction-limits {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border-top: 1px solid var(--color-border);
+}
+
+.limit-badge {
+    font-size: var(--text-xs);
+    padding: 2px 6px;
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-sm);
+}
+
+.limit-badge.warning {
+    background: var(--color-danger);
+    color: white;
+}
+
+
+/* ==========================================================================
+   Evidence Card States (已出示/禁用)
+   ========================================================================== */
+
+.evidence-card.presented {
+    opacity: 0.5;
+    position: relative;
+    cursor: default;
+}
+
+.evidence-card.presented::after {
+    content: '✓';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--color-success);
+    color: white;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.evidence-card.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
+}

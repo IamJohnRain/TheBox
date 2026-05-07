@@ -44,9 +44,15 @@ def _replace_suspects_with_mocks(engine, case_data):
         mock_agent.name = s_data["name"]
         mock_agent.pressure = 50
         mock_agent.memory = []
+        mock_agent.fear = 50
+        mock_agent.defiance = 50
+        mock_agent.confession_level = 0
         mock_agent.respond.return_value = {
             "reply": "我是无辜的",
-            "pressure_change": 0,
+            "secret_triggered": None,
+        }
+        mock_agent.respond_evidence.return_value = {
+            "reply": "我是无辜的",
             "secret_triggered": None,
         }
         engine.suspects[i] = mock_agent

@@ -18,8 +18,17 @@ class DummySuspectAgent:
         self.pressure: int = 50
         self.memory: List[Dict[str, str]] = []
         self._reply = "我是无辜的"
-        self._pressure_change = 0
         self._secret_triggered = None
+        # Phase 1e: hidden dimensions
+        self.confession_level: int = 0
+        self.confession_progress: float = 0.0
+        self.turn_count: int = 0
+        self.fear: int = 50
+        self.defiance: int = 50
+        self.empathy_susceptibility: int = 50
+        self.deception_skill: int = 50
+        self.loyalty: int = 50
+        self.credibility: int = 50
 
     def respond(self, player_input: str, context: Optional[dict] = None) -> dict:
         """Return a fixed response dict."""
@@ -27,9 +36,27 @@ class DummySuspectAgent:
         self.memory.append({"role": "assistant", "content": self._reply})
         return {
             "reply": self._reply,
-            "pressure_change": self._pressure_change,
             "secret_triggered": self._secret_triggered,
         }
+
+    def respond_evidence(
+        self, evidence_description: str, evidence_type: str = "unknown"
+    ) -> dict:
+        """Return a fixed response dict for evidence presentation."""
+        self.memory.append({"role": "user", "content": f"[出示证据] {evidence_description}"})
+        self.memory.append({"role": "assistant", "content": self._reply})
+        return {
+            "reply": self._reply,
+            "secret_triggered": self._secret_triggered,
+        }
+
+    def update_confession_progress(self) -> float:
+        """No-op for dummy agent."""
+        return self.confession_progress
+
+    def check_confession_upgrade(self, has_evidence: bool = False) -> Optional[int]:
+        """No-op for dummy agent."""
+        return None
 
 
 def _make_mock_case() -> dict:
@@ -156,10 +183,12 @@ def test_full_interrogation_flow(temp_db, mock_case):
 
     events = engine.submit_action("present_evidence", "看看这个证据", evidence_id="ev1")
     assert "ev1" in engine.presented_evidence_ids
-    assert engine.suspects[0].pressure == 80
+    # Pressure increase is now calculated programmatically (not hardcoded +20)
+    pressure_after_evidence = engine.suspects[0].pressure
+    assert pressure_after_evidence > 60  # Should be higher than after pressure action
 
     events = engine.submit_action("empathy", "我能理解你。")
-    assert engine.suspects[0].pressure == 75
+    assert engine.suspects[0].pressure == pressure_after_evidence - 5
 
     engine.select_suspect(1)
     assert engine.current_suspect_index == 1

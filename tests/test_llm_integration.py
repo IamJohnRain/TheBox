@@ -186,23 +186,25 @@ class TestSuspectAgentRealInterrogation:
 
         result = agent.respond("你在哪里？")
         assert "reply" in result
-        assert "pressure_change" in result
+        assert "secret_triggered" in result
+        # pressure_change is no longer returned by respond (Phase 1b)
+        assert "pressure_change" not in result
         # 不应该立即触发secret
         assert result.get("secret_triggered") is None
 
     @pytest.mark.real_api
-    def test_suspect_agent_pressure_change(self):
-        """施压后压力变化"""
+    def test_suspect_agent_respond_evidence(self):
+        """SuspectAgent respond_evidence方法真实调用"""
         if not has_real_api_config():
             pytest.skip("未配置有效的API")
 
         suspect_data = self._get_suspect_data()
         agent = SuspectAgent(suspect_data, "测试案件")
-        initial_pressure = agent.pressure
 
-        result = agent.respond("说实话！发生了什么？")
-        # 压力应该有变化
-        assert agent.pressure != initial_pressure or result["pressure_change"] != 0
+        result = agent.respond_evidence("现场发现了血迹", "physical")
+        assert "reply" in result
+        assert "secret_triggered" in result
+        assert "pressure_change" not in result
 
     @pytest.mark.real_api
     def test_suspect_agent_memory(self):
