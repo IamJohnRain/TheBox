@@ -103,3 +103,24 @@ def mock_case_with_culprit():
     if "culprit_name" not in case_data:
         case_data["culprit_name"] = "李四"
     return case_data
+
+
+@pytest.fixture
+def state_driven_suspect_cls():
+    """Return the StateDrivenSuspect class for test use."""
+    from tests.fixtures.state_driven_suspect import StateDrivenSuspect
+
+    return StateDrivenSuspect
+
+
+@pytest.fixture
+def engine_with_state_driven(mock_case_simple, state_driven_suspect_cls):
+    """Create an InterrogationEngine with StateDrivenSuspect instances.
+
+    Each suspect auto-upgrades confession when thresholds are met.
+    """
+    from core.interrogation import InterrogationEngine
+
+    engine = InterrogationEngine(mock_case_simple)
+    engine.suspects = [state_driven_suspect_cls(s, mock_case_simple["title"]) for s in mock_case_simple["suspects"]]
+    return engine
