@@ -1,0 +1,99 @@
+{
+  "story_id": "test_story",
+  "title": "测试剧情",
+  "desc": "用于测试的简短剧情",
+  "chapters": [
+    {
+      "chapter_id": "ch01",
+      "seq": 1,
+      "title": "第一章",
+      "type": "scripted",
+      "narrative": {
+        "opening": "这是第一章的开场。",
+        "closing_win": "你成功了！",
+        "closing_partial": "部分成功。",
+        "closing_fail": "你失败了。"
+      },
+      "case_data": {
+        "case_id": "test_ch01",
+        "title": "测试案件",
+        "victim": "测试受害者",
+        "cause_of_death": "测试原因",
+        "crime_scene": "测试现场",
+        "truth": "测试真相",
+        "culprit_name": "嫌疑人A",
+        "suspects": [
+          {
+            "name": "嫌疑人A",
+            "role": "嫌疑人",
+            "personality": "暴躁",
+            "knowledge": "我知道真相",
+            "forbidden_to_reveal": ["真相"]
+          }
+        ],
+        "evidences": [
+          {"id": "e1", "name": "证据1", "description": "描述", "type": "physical", "strength": 5, "related_suspect": "嫌疑人A"}
+        ]
+      },
+      "branch": {
+        "conditions": [
+          {"result": "win", "next": "ending_good"},
+          {"result": "partial", "next": "ch02"},
+          {"next": "ending_bad"}
+        ]
+      },
+      "story_variables": {}
+    },
+    {
+      "chapter_id": "ch02",
+      "seq": 2,
+      "title": "第二章",
+      "type": "scripted",
+      "narrative": {
+        "opening": "这是第二章。",
+        "closing_win": "第二章成功！",
+        "closing_partial": "第二章部分。",
+        "closing_fail": "第二章失败。"
+      },
+      "case_data": {
+        "case_id": "test_ch02",
+        "title": "测试案件2",
+        "victim": "受害者2",
+        "cause_of_death": "原因2",
+        "crime_scene": "现场2",
+        "truth": "真相2",
+        "culprit_name": "嫌疑人B",
+        "suspects": [
+          {
+            "name": "嫌疑人B",
+            "role": "嫌疑人",
+            "personality": "胆小",
+            "knowledge": "我知道",
+            "forbidden_to_reveal": ["秘密"]
+          }
+        ],
+        "evidences": []
+      },
+      "branch": {
+        "conditions": [
+          {"next": "ending_good"}
+        ]
+      },
+      "story_variables": {}
+    }
+  ],
+  "endings": [
+    {
+      "id": "ending_good",
+      "title": "好结局",
+      "desc": "你成功解决了案件。",
+      "narrative": "阳光明媚，案件告破。"
+    },
+    {
+      "id": "ending_bad",
+      "title": "坏结局",
+      "desc": "案件陷入僵局。",
+      "narrative": "雨夜中，真相依然模糊。"
+    }
+  ]
+}

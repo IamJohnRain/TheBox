@@ -1,0 +1,322 @@
+{
+  "story_id": "missing_father",
+  "title": "寻找失踪父亲",
+  "desc": "一段跨越二十年的悬疑故事。你是一名新入职的警探，在调查一系列看似无关的案件时，逐渐发现这些案件都指向同一个真相——自己失踪多年的父亲。",
+  "chapters": [
+    {
+      "chapter_id": "ch01",
+      "seq": 1,
+      "title": "初入警局",
+      "type": "scripted",
+      "narrative": {
+        "opening": "今天是你第一天报到。刚走进警局，就被派去审讯一名被抓的小偷。据说他偷了一件很重要的东西——一本旧日记。当你走进审讯室，看到那个蓬头垢面的男人时，你不会想到，这本日记将改变你的人生。",
+        "closing_win": "小偷终于开口了。他说那本日记是从一个'老朋友'那里偷来的，日记的主人叫李明远——那是你父亲的名字。你的心跳漏了一拍。",
+        "closing_partial": "小偷虽然没有完全坦白，但他提到了一个名字：李明远。这个名字让你愣住了——那是你失踪多年的父亲。",
+        "closing_fail": "小偷始终不肯开口。但你注意到他口袋里露出的一角纸片，上面似乎写着什么..."
+      },
+      "case_data": {
+        "case_id": "ch01_case",
+        "title": "日记失窃案",
+        "victim": "博物馆馆长",
+        "cause_of_death": "无（盗窃案）",
+        "crime_scene": "博物馆储藏室",
+        "truth": "小偷张三受人指使，偷取一本旧日记。日记中记载着二十年前的秘密。",
+        "culprit_name": "张三",
+        "suspects": [
+          {
+            "name": "张三",
+            "role": "小偷",
+            "personality": "胆小",
+            "personality_secondary": "忠诚",
+            "knowledge": "有人雇我偷这本日记。我不知道日记里写了什么，只知道雇主很着急。日记的主人叫李明远。",
+            "forbidden_to_reveal": ["李明远", "日记内容", "雇主"]
+          }
+        ],
+        "evidences": [
+          {
+            "id": "e1",
+            "name": "被盗的日记",
+            "description": "一本泛黄的旧日记，封面上写着'李明远'三个字",
+            "type": "physical",
+            "strength": 8,
+            "related_suspect": "张三"
+          },
+          {
+            "id": "e2",
+            "name": "监控录像",
+            "description": "显示嫌疑人在案发时间出现在博物馆",
+            "type": "document",
+            "strength": 6,
+            "related_suspect": "张三"
+          }
+        ]
+      },
+      "branch": {
+        "conditions": [
+          {"result": "win", "next": "ch02"},
+          {"result": "partial", "next": "ch02"},
+          {"next": "ch02"}
+        ]
+      },
+      "story_variables": {
+        "set": {"found_diary": true, "knows_father_name": true}
+      }
+    },
+    {
+      "chapter_id": "ch02",
+      "seq": 2,
+      "title": "旧案重提",
+      "type": "scripted",
+      "narrative": {
+        "opening": "你翻开了父亲的旧档案。二十年前，李明远是一名优秀的警探，在调查一起大案时突然失踪。档案中提到一个关键证人——王老五。",
+        "closing_win": "王老五终于说出了真相：你父亲当年发现了警局内部的腐败，被迫隐姓埋名。他一直在暗中调查，等待时机。",
+        "closing_partial": "王老五虽然没有完全坦白，但他透露：你父亲还活着。",
+        "closing_fail": "王老五守口如瓶。但你在他桌上发现了一张老照片..."
+      },
+      "case_data": {
+        "case_id": "ch02_case",
+        "title": "旧档案的秘密",
+        "victim": "无",
+        "cause_of_death": "无（询问案）",
+        "crime_scene": "档案室",
+        "truth": "王老五是当年的目击者，知道李明远失踪的真相。",
+        "culprit_name": "王老五",
+        "suspects": [
+          {
+            "name": "王老五",
+            "role": "退休警员",
+            "personality": "固执",
+            "personality_secondary": "忠诚",
+            "knowledge": "李明远是我的老搭档。他发现了警局内部的腐败，被迫消失。我知道他在哪里，但我不能说。",
+            "forbidden_to_reveal": ["李明远下落", "腐败", "警局内部"]
+          }
+        ],
+        "evidences": [
+          {
+            "id": "e3",
+            "name": "旧档案",
+            "description": "二十年前的案件档案，记录了李明远失踪前的最后行踪",
+            "type": "document",
+            "strength": 7,
+            "related_suspect": "王老五"
+          },
+          {
+            "id": "e4",
+            "name": "老照片",
+            "description": "王老五和李明远的合影，背面写着一个地址",
+            "type": "physical",
+            "strength": 9,
+            "related_suspect": "王老五"
+          }
+        ]
+      },
+      "branch": {
+        "conditions": [
+          {"result": "win", "next": "ch03"},
+          {"result": "partial", "next": "ch03"},
+          {"next": "ending_mystery"}
+        ]
+      },
+      "story_variables": {
+        "set": {"knows_father_alive": true},
+        "carry_evidence": ["e4"]
+      }
+    },
+    {
+      "chapter_id": "ch03",
+      "seq": 3,
+      "title": "神秘线人",
+      "type": "scripted",
+      "narrative": {
+        "opening": "根据照片背面的地址，你找到了一个神秘的线人。她自称'夜莺'，说有重要情报要告诉你。",
+        "closing_win": "夜莺告诉你：你父亲正在调查一个庞大的犯罪网络。他已经掌握了关键证据，但需要你的帮助才能完成最后一步。",
+        "closing_partial": "夜莺透露了一些信息，但似乎还有所保留。",
+        "closing_fail": "夜莺突然中断了谈话，匆匆离去..."
+      },
+      "case_data": {
+        "case_id": "ch03_case",
+        "title": "夜莺的情报",
+        "victim": "无",
+        "cause_of_death": "无（情报交换）",
+        "crime_scene": "废弃工厂",
+        "truth": "夜莺是李明远的联络人，负责传递情报。",
+        "culprit_name": "夜莺",
+        "suspects": [
+          {
+            "name": "夜莺",
+            "role": "线人",
+            "personality": "狡猾",
+            "personality_secondary": "孤僻",
+            "knowledge": "我是李明远的联络人。他让我告诉你：'盒子的秘密即将揭晓。'你需要找到最后的证据。",
+            "forbidden_to_reveal": ["李明远计划", "盒子", "最后证据"]
+          }
+        ],
+        "evidences": [
+          {
+            "id": "e5",
+            "name": "加密信件",
+            "description": "夜莺交给你的加密信件，需要破译",
+            "type": "document",
+            "strength": 8,
+            "related_suspect": "夜莺"
+          }
+        ]
+      },
+      "branch": {
+        "conditions": [
+          {"result": "win", "next": "ch04"},
+          {"result": "partial", "next": "ch04"},
+          {"next": "ending_mystery"}
+        ]
+      },
+      "story_variables": {
+        "set": {"knows_box_secret": true, "has_encrypted_letter": true}
+      }
+    },
+    {
+      "chapter_id": "ch04",
+      "seq": 4,
+      "title": "真相逼近",
+      "type": "scripted",
+      "narrative": {
+        "opening": "破译了信件后，你找到了当年的目击者——陈老太。她是你父亲案件的最后一个证人。",
+        "closing_win": "陈老太终于说出了真相：你父亲发现了'盒子'——一份记录所有腐败官员的名单。他为了保护家人，选择了消失。",
+        "closing_partial": "陈老太透露了一些信息，但关键部分仍然模糊。",
+        "closing_fail": "陈老太似乎很害怕，不肯多说..."
+      },
+      "case_data": {
+        "case_id": "ch04_case",
+        "title": "最后的证人",
+        "victim": "无",
+        "cause_of_death": "无（询问案）",
+        "crime_scene": "陈老太家中",
+        "truth": "陈老太是李明远的邻居，目睹了他消失的那天晚上。",
+        "culprit_name": "陈老太",
+        "suspects": [
+          {
+            "name": "陈老太",
+            "role": "邻居",
+            "personality": "胆小",
+            "personality_secondary": "忠诚",
+            "knowledge": "那天晚上，我看到李明远匆匆离开。他留下了一个盒子，说如果有人来找他，就把盒子交给那个人。",
+            "forbidden_to_reveal": ["盒子位置", "李明远留言", "那天晚上"]
+          }
+        ],
+        "evidences": [
+          {
+            "id": "e6",
+            "name": "陈老太的证词",
+            "description": "陈老太描述了李明远消失那天的情景",
+            "type": "testimony",
+            "strength": 7,
+            "related_suspect": "陈老太"
+          },
+          {
+            "id": "e7",
+            "name": "旧钥匙",
+            "description": "陈老太交给你的钥匙，据说是李明远留下的",
+            "type": "physical",
+            "strength": 10,
+            "related_suspect": "陈老太"
+          }
+        ]
+      },
+      "branch": {
+        "conditions": [
+          {"result": "win", "next": "ch05"},
+          {"result": "partial", "next": "ch05"},
+          {"next": "ending_mystery"}
+        ]
+      },
+      "story_variables": {
+        "set": {"has_key": true, "knows_box_location": true},
+        "carry_evidence": ["e7"]
+      }
+    },
+    {
+      "chapter_id": "ch05",
+      "seq": 5,
+      "title": "最终对决",
+      "type": "scripted",
+      "narrative": {
+        "opening": "用钥匙打开了那个尘封已久的盒子。里面是一份名单——记录着二十年来所有腐败官员的名字。而名单的最后一行，写着一个你熟悉的名字...",
+        "closing_win": "你终于找到了父亲。他老了，但眼神依然坚定。'你做得很好，'他说，'现在，让我们一起结束这一切。'",
+        "closing_partial": "真相大白，但父亲已经不在了。你只能带着他的遗志继续前行。",
+        "closing_fail": "名单被销毁了。真相再次沉入黑暗..."
+      },
+      "case_data": {
+        "case_id": "ch05_case",
+        "title": "盒子的秘密",
+        "victim": "无",
+        "cause_of_death": "无（最终对决）",
+        "crime_scene": "废弃仓库",
+        "truth": "幕后黑手是现任副局长赵六。他当年陷害了李明远，现在想要销毁所有证据。",
+        "culprit_name": "赵六",
+        "suspects": [
+          {
+            "name": "赵六",
+            "role": "副局长",
+            "personality": "狡猾",
+            "personality_secondary": "暴躁",
+            "knowledge": "你以为你能阻止我？二十年了，我一直在等这一天。那份名单，你永远也拿不到。",
+            "forbidden_to_reveal": ["陷害李明远", "名单下落", "我的罪行"]
+          }
+        ],
+        "evidences": [
+          {
+            "id": "e8",
+            "name": "腐败名单",
+            "description": "记录着所有腐败官员的名单",
+            "type": "document",
+            "strength": 10,
+            "related_suspect": "赵六"
+          },
+          {
+            "id": "e9",
+            "name": "赵六的录音",
+            "description": "赵六承认陷害李明远的录音",
+            "type": "testimony",
+            "strength": 9,
+            "related_suspect": "赵六"
+          }
+        ]
+      },
+      "branch": {
+        "conditions": [
+          {"result": "win", "next": "ending_good"},
+          {"result": "partial", "next": "ending_partial"},
+          {"next": "ending_bad"}
+        ]
+      },
+      "story_variables": {
+        "set": {"case_closed": true}
+      }
+    }
+  ],
+  "endings": [
+    {
+      "id": "ending_good",
+      "title": "真相大白",
+      "desc": "你找到了父亲，揭露了二十年的腐败。正义终于得到伸张。",
+      "narrative": "阳光透过审讯室的窗户洒进来。你看着对面的父亲，二十年的思念化作一句话：'爸，我们回家。'李明远微笑着点了点头。门外，警笛声响起——赵六被带走了。这个城市，终于迎来了新的一天。"
+    },
+    {
+      "id": "ending_partial",
+      "title": "暗影重重",
+      "desc": "部分真相被揭露，但父亲的下落仍然是个谜。",
+      "narrative": "雨夜中，你独自走出警局。名单上的名字一个个被调查，但你的父亲却始终没有出现。也许他还在某个地方，继续着他的使命。你抬头看着天空，轻声说：'爸，我会继续找你的。'"
+    },
+    {
+      "id": "ending_bad",
+      "title": "牺牲之路",
+      "desc": "真相被埋藏，但你不会放弃。",
+      "narrative": "你合上了卷宗，轻轻叹了口气。名单被销毁了，赵六逍遥法外。但你知道，这只是暂时的。总有一天，真相会大白于天下。你站起身，走出办公室——还有更多的案件等着你去解决。"
+    },
+    {
+      "id": "ending_mystery",
+      "title": "迷雾重重",
+      "desc": "线索中断，真相依然模糊。",
+      "narrative": "你坐在办公桌前，看着手中仅有的几条线索。父亲的失踪，腐败的网络，神秘的盒子...一切都像一团迷雾。但你不会放弃。因为你知道，在这迷雾的背后，藏着一个你追寻了二十年的答案。"
+    }
+  ]
+}

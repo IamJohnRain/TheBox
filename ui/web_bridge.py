@@ -90,6 +90,21 @@ class WebBridge(QObject):
     fear_update = Signal(int, int, str)  # suspect_index, fear_value, reason
     interaction_limits_update = Signal(int, int, int, int)  # suspect_index, chat, pressure, empathy
 
+    # 模式选择
+    show_mode_selector = Signal()
+
+    # 剧情模式信号
+    show_narrative = Signal(str, str, str)  # chapter_number, chapter_title, narrative_text
+    show_ending = Signal(str, str, str)  # title, desc, narrative
+    update_story_progress = Signal(int, int)  # current, total
+    load_story_list = Signal(str)  # stories JSON (as string)
+
+    # JS → Python 剧情模式信号（由 Slot 发射）
+    story_mode_requested = Signal(str)  # story_id
+    custom_mode_requested = Signal()
+    story_list_requested = Signal()
+    chapter_start_requested = Signal()
+
     # === JS → Python 槽 ===
 
     @Slot(str)
@@ -201,3 +216,23 @@ class WebBridge(QObject):
     def requestCaseBriefing(self):
         """请求查看案件资料。"""
         self.case_briefing_requested.emit()
+
+    @Slot()
+    def requestStoryList(self):
+        """从 JS 调用：请求剧情列表。"""
+        self.story_list_requested.emit()
+
+    @Slot()
+    def startChapter(self):
+        """从 JS 调用：开始当前章节。"""
+        self.chapter_start_requested.emit()
+
+    @Slot(str)
+    def startStoryMode(self, story_id: str):
+        """从 JS 调用：启动剧情模式。"""
+        self.story_mode_requested.emit(story_id)
+
+    @Slot()
+    def startCustomMode(self):
+        """从 JS 调用：启动自定义模式。"""
+        self.custom_mode_requested.emit()

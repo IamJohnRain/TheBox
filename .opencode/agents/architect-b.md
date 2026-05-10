@@ -1,7 +1,7 @@
 ---
 description: 架构师B，负责独立评审方案，提供专业评审意见
 mode: subagent
-model: volcengine/glm-5.1
+model: deepseek/deepseek-v4-pro
 temperature: 0.2
 permission:
   edit: deny

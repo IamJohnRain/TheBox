@@ -358,6 +358,44 @@
             if (!data || !data.data) return;
             modalManager.showCaseBriefing(data.data);
         });
+
+        // 剧情模式事件
+        bridge.on('showNarrative', (data) => {
+            if (!data) return;
+            const menuMgr = window.menuManager;
+            if (menuMgr && typeof menuMgr.showNarrative === 'function') {
+                menuMgr.showNarrative(data.chapterNumber, data.chapterTitle, data.narrativeText);
+            }
+        });
+
+        bridge.on('showEnding', (data) => {
+            if (!data) return;
+            const menuMgr = window.menuManager;
+            if (menuMgr && typeof menuMgr.showEnding === 'function') {
+                menuMgr.showEnding(data.title, data.desc, data.narrative);
+            }
+        });
+
+        bridge.on('updateStoryProgress', (data) => {
+            if (!data) return;
+            const menuMgr = window.menuManager;
+            if (menuMgr && typeof menuMgr.updateProgress === 'function') {
+                menuMgr.updateProgress(data.current, data.total);
+            }
+        });
+
+        bridge.on('loadStoryList', (data) => {
+            if (!data) return;
+            const menuMgr = window.menuManager;
+            if (menuMgr && typeof menuMgr.loadStoryList === 'function') {
+                try {
+                    const stories = typeof data.stories === 'string' ? JSON.parse(data.stories) : data.stories;
+                    menuMgr.loadStoryList(stories);
+                } catch (e) {
+                    console.error('[App] Failed to parse story list:', e);
+                }
+            }
+        });
     }
 
     // ================================================================

@@ -1,7 +1,7 @@
 ---
 description: 开发Agent，负责按里程碑实现代码，遵循项目架构规范
 mode: subagent
-model: volcengine/glm-5.1
+model: deepseek/deepseek-v4-flash
 temperature: 0.2
 permission:
   edit: allow

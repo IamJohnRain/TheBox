@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QMainWindow
 from core import db
 from core.config import get_api_key, get_settings, save_settings
 from core.exceptions import ContentFilterError
+from core.game_session import GameSession
 from core.interrogation import InterrogationEngine
 from core.providers import get_provider_list, get_provider_models
 from ui.web_bridge import WebBridge
@@ -168,6 +169,8 @@ class WebMainWindow(QMainWindow):
         self.resize(1280, 800)
 
         self.engine: Optional[InterrogationEngine] = None
+        self.session: Optional[GameSession] = None
+        self.player = None  # 延迟初始化 PlayerProfile
         self._current_worker: Optional[WebWorker] = None
         self._test_worker: Optional[TestConnectionWorker] = None
         self._case_gen_worker: Optional[CaseGenerateWorker] = None
@@ -228,6 +231,22 @@ class WebMainWindow(QMainWindow):
         )
         self.bridge.review_requested.connect(self._on_review_requested)
         self.bridge.case_briefing_requested.connect(self._on_case_briefing_requested)
+
+        # 剧情模式桥接
+        self.bridge.story_mode_requested.connect(self._on_start_story_mode)
+        self.bridge.custom_mode_requested.connect(self._on_start_custom_mode)
+        self.bridge.story_list_requested.connect(self._on_request_story_list)
+        self.bridge.chapter_start_requested.connect(self._on_start_chapter)
+
+        # 初始化玩家档案
+        try:
+            from core.player import PlayerProfile
+            from core.db import get_connection
+            conn = get_connection()
+            self.player = PlayerProfile(db_connection=conn)
+        except Exception:
+            from core.player import PlayerProfile
+            self.player = PlayerProfile()
 
     def _emit_case_briefing(self, case_data):
         """发送案件资料到前端。"""
@@ -492,6 +511,7 @@ class WebMainWindow(QMainWindow):
     def _return_to_menu(self):
         """返回主菜单。"""
         self.engine = None
+        self.session = None
         self.bridge.clear_chat.emit()
         self._countdown_timer.stop()
 
@@ -507,6 +527,132 @@ class WebMainWindow(QMainWindow):
             },
             "interactive": False,
         })
+
+    # ================================================================
+    # Mode Selection & GameSession
+    # ================================================================
+
+    @property
+    def active_engine(self):
+        """访问当前会话的引擎。
+
+        优先返回 session.engine，兼容直接设置 self.engine 的旧流程。
+        """
+        return self.session.engine if self.session else self.engine
+
+    def start_story_mode(self, story_id: str):
+        """启动剧情模式。
+
+        Args:
+            story_id: 剧情 ID，如 "missing_father"。
+        """
+        from core.game_session import GameSession
+
+        logger.debug(f"启动剧情模式: {story_id}")
+
+        self.session = GameSession()
+        player = getattr(self, 'player', None)
+        self.session.start_story(story_id, player)
+
+        # 获取第一章的开场叙事
+        chapter = self.session.story_engine._get_current_chapter()
+        narrative = chapter.get("narrative", {})
+        opening = narrative.get("opening", "")
+        seq = chapter.get("seq", 1)
+        title = chapter.get("title", "")
+
+        # 显示叙事过场
+        self.bridge.show_narrative.emit(
+            f"第{seq}章", title, opening
+        )
+
+        # 显示章节进度
+        total = len(self.session.story_engine.story["chapters"])
+        self.bridge.update_story_progress.emit(seq, total)
+
+    def start_custom_mode(self, background: str):
+        """启动自定义模式。
+
+        Args:
+            background: 案件背景描述。
+        """
+        from core.case_generator import generate_case
+
+        self.session = GameSession()
+        case_data = generate_case(background)
+        self.session.start_custom(case_data, self.player if hasattr(self, "player") else None)
+
+        # 同步引擎引用
+        self.engine = self.session.engine
+
+        # 初始化游戏状态
+        self._init_game_state()
+
+    def _init_game_state(self):
+        """从当前 session.engine 初始化游戏 UI 状态。"""
+        engine = self.active_engine
+        if engine is None:
+            return
+
+        case_data = engine.case
+        state = {
+            "suspects": [
+                {"name": s.name, "pressure": s.pressure}
+                for s in engine.suspects
+            ],
+            "evidences": case_data.get("evidences", []),
+            "timeLeft": engine.time_left,
+            "current_suspect_index": 0,
+            "state": engine.state,
+            "case_id": case_data.get("case_id", ""),
+            "caseTitle": case_data.get("title", ""),
+            "caseBackground": {
+                "title": case_data.get("title", ""),
+                "victim": case_data.get("victim", ""),
+                "causeOfDeath": case_data.get("cause_of_death", ""),
+                "crimeScene": case_data.get("crime_scene", ""),
+            },
+            "suspectProfiles": [
+                {
+                    "name": s.get("name", ""),
+                    "role": s.get("role", ""),
+                    "personality": s.get("personality", ""),
+                }
+                for s in case_data.get("suspects", [])
+            ],
+        }
+
+        self.bridge.init_full_state.emit({"state": state, "interactive": True})
+        self._emit_case_briefing(case_data)
+
+        if engine.suspects:
+            self._on_suspect_changed(0)
+
+    def _on_start_story_mode(self, story_id):
+        """处理 JS 请求启动剧情模式。"""
+        self.start_story_mode(story_id)
+
+    def _on_start_custom_mode(self):
+        """处理 JS 请求启动自定义模式。"""
+        # 显示自定义模式输入对话框
+        self.start_custom_mode("")
+
+    def _on_request_story_list(self):
+        """处理 JS 请求剧情列表。"""
+        from core.story_loader import list_available_stories
+        stories = list_available_stories()
+        self.bridge.load_story_list.emit(json.dumps(stories))
+
+    def _on_start_chapter(self):
+        """处理 JS 请求开始章节。"""
+        if self.session and self.session.mode == "story":
+            case_data = self.session.start_chapter()
+            from core.interrogation import InterrogationEngine
+            self.session.engine = InterrogationEngine(case_data)
+            if hasattr(self, 'player') and self.player:
+                self.session.engine.init_tools(self.player.level)
+            self.session.story_engine.interrogation_engine = self.session.engine
+            self._init_game_state()
 
     # ================================================================
     # Review

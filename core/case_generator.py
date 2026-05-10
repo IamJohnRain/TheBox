@@ -393,3 +393,81 @@ def generate_case(
             logger.warning(f"第 {attempt + 1} 次生成失败: {e}")
 
     raise ValidationError(f"案件生成失败，重试 {max_retries} 次后仍不通过: {last_error}")
+
+
+def generate_case_with_constraints(
+    constraints: dict,
+    story_variables: dict = None,
+    max_retries: int = 2,
+) -> dict:
+    """根据约束生成案件。
+
+    Args:
+        constraints: 案件约束
+            - background: 案件背景描述
+            - suspect_count: 嫌疑人数范围 {"min": 2, "max": 3}
+            - evidence_count: 证据数范围
+            - difficulty: 难度
+            - require_variables: 需要注入的叙事变量
+        story_variables: 跨章节叙事变量
+        max_retries: 最大重试次数
+
+    Returns:
+        符合 CASE_SCHEMA 的案件数据
+    """
+    background = constraints.get("background", "一起神秘的案件")
+
+    # 注入叙事变量
+    if story_variables:
+        var_text = "\n".join([f"- {k}: {v}" for k, v in story_variables.items()])
+        background += f"\n\n剧情背景变量:\n{var_text}"
+
+    # 注入约束
+    if "require_variables" in constraints:
+        req = constraints["require_variables"]
+        if "must_mention" in req:
+            background += f"\n\n案件必须涉及: {req['must_mention']}"
+
+    # 设置难度（嵌入背景文本）
+    difficulty = constraints.get("difficulty", "normal")
+    if difficulty != "normal":
+        difficulty_hints = {
+            "easy": "简单难度：线索明显，动机清晰，适合新手。",
+            "hard": "困难难度：线索隐蔽，动机复杂，需要深入推理。",
+        }
+        hint = difficulty_hints.get(difficulty, "")
+        if hint:
+            background += f"\n\n难度要求: {hint}"
+
+    # 注入数量约束提示
+    if "suspect_count" in constraints:
+        count = constraints["suspect_count"]
+        min_s = count.get("min", 2)
+        max_s = count.get("max", 3)
+        background += f"\n\n嫌疑人数要求: {min_s}到{max_s}人。"
+
+    if "evidence_count" in constraints:
+        count = constraints["evidence_count"]
+        min_e = count.get("min", 1)
+        max_e = count.get("max", 5)
+        background += f"\n\n证据数量要求: {min_e}到{max_e}条。"
+
+    # 调用现有生成器
+    case_data = generate_case(background, max_retries=max_retries)
+
+    # 校验数量约束
+    if "suspect_count" in constraints:
+        count = constraints["suspect_count"]
+        actual = len(case_data.get("suspects", []))
+        if actual < count.get("min", 1):
+            logger.warning(f"生成的嫌疑人数不足: 实际 {actual}, 期望最小 {count.get('min', 1)}")
+        if actual > count.get("max", 99):
+            logger.warning(f"生成的嫌疑人过多: 实际 {actual}, 期望最大 {count.get('max', 99)}")
+
+    if "evidence_count" in constraints:
+        count = constraints["evidence_count"]
+        actual = len(case_data.get("evidences", []))
+        if actual < count.get("min", 0):
+            logger.warning(f"生成的证据数不足: 实际 {actual}, 期望最小 {count.get('min', 0)}")
+
+    return case_data

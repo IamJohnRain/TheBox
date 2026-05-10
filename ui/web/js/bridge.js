@@ -186,6 +186,23 @@ class WebBridge {
             this._trigger('interactionLimitsUpdate', { suspectIndex, chat, pressure, empathy });
         });
 
+        // Story mode signals
+        this.pythonBridge.show_narrative.connect((chapterNumber, chapterTitle, narrativeText) => {
+            this._trigger('showNarrative', { chapterNumber, chapterTitle, narrativeText });
+        });
+
+        this.pythonBridge.show_ending.connect((title, desc, narrative) => {
+            this._trigger('showEnding', { title, desc, narrative });
+        });
+
+        this.pythonBridge.update_story_progress.connect((current, total) => {
+            this._trigger('updateStoryProgress', { current, total });
+        });
+
+        this.pythonBridge.load_story_list.connect((storiesJson) => {
+            this._trigger('loadStoryList', { stories: storiesJson });
+        });
+
         console.log('[WebBridge] Signal listeners setup complete');
     }
 
@@ -354,6 +371,30 @@ class WebBridge {
     requestCaseBriefing() {
         if (this.pythonBridge) {
             this.pythonBridge.requestCaseBriefing();
+        }
+    }
+
+    requestStoryList() {
+        if (this.pythonBridge) {
+            this.pythonBridge.requestStoryList();
+        }
+    }
+
+    startChapter() {
+        if (this.pythonBridge) {
+            this.pythonBridge.startChapter();
+        }
+    }
+
+    startStoryMode(storyId) {
+        if (this.pythonBridge && this.pythonBridge.startStoryMode) {
+            this.pythonBridge.startStoryMode(storyId);
+        }
+    }
+
+    startCustomMode() {
+        if (this.pythonBridge && this.pythonBridge.startCustomMode) {
+            this.pythonBridge.startCustomMode();
         }
     }
 }

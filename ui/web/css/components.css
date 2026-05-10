@@ -1646,3 +1646,392 @@ body.modal-open .typing-dot {
     cursor: not-allowed;
     pointer-events: none;
 }
+
+
+/* ==========================================================================
+   Main Menu Styles
+   ========================================================================== */
+
+.main-menu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    z-index: 1000;
+}
+
+.main-menu.hidden {
+    display: none;
+}
+
+.menu-title {
+    font-size: 2.5rem;
+    font-weight: var(--font-weight-bold);
+    color: var(--color-accent-cyan);
+    text-shadow: var(--glow-cyan);
+    margin-bottom: var(--space-2);
+    letter-spacing: 0.05em;
+}
+
+.menu-subtitle {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-8);
+}
+
+.mode-selector {
+    display: flex;
+    gap: var(--space-6);
+}
+
+.mode-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-6);
+    border: 2px solid rgba(0, 245, 255, 0.2);
+    border-radius: var(--layout-border-radius-xl);
+    background: var(--color-bg-card);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    min-width: 200px;
+}
+
+.mode-btn:hover {
+    border-color: var(--color-accent-cyan);
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg), var(--glow-cyan);
+}
+
+.mode-btn:active {
+    transform: translateY(-2px);
+}
+
+.mode-icon {
+    font-size: 3rem;
+    margin-bottom: var(--space-3);
+}
+
+.mode-name {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-2);
+}
+
+.mode-desc {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    text-align: center;
+}
+
+
+/* ==========================================================================
+   Story List Styles
+   ========================================================================== */
+
+.story-list {
+    margin-top: var(--space-6);
+    text-align: center;
+}
+
+.story-list-title {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-4);
+}
+
+.story-cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+    max-width: 500px;
+    width: 100%;
+}
+
+.story-card {
+    display: flex;
+    align-items: center;
+    padding: var(--space-4) var(--space-5);
+    border: 1px solid rgba(0, 245, 255, 0.15);
+    border-radius: var(--layout-border-radius-lg);
+    background: var(--color-bg-card);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    text-align: left;
+}
+
+.story-card:hover {
+    border-color: var(--color-accent-cyan);
+    background: rgba(0, 245, 255, 0.08);
+    transform: translateX(4px);
+}
+
+.story-card-info {
+    flex: 1;
+}
+
+.story-card-title {
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-1);
+}
+
+.story-card-desc {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-1);
+}
+
+.story-card-meta {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+.story-card-arrow {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-lg);
+    transition: transform var(--transition-fast), color var(--transition-fast);
+}
+
+.story-card:hover .story-card-arrow {
+    color: var(--color-accent-cyan);
+    transform: translateX(4px);
+}
+
+
+/* ==========================================================================
+   Narrative Overlay Styles
+   ========================================================================== */
+
+.narrative-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.narrative-overlay.hidden {
+    display: none;
+}
+
+.narrative-content {
+    max-width: 600px;
+    padding: var(--space-8);
+    text-align: center;
+}
+
+.chapter-header {
+    margin-bottom: var(--space-6);
+}
+
+.chapter-number {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    display: block;
+    margin-bottom: var(--space-2);
+}
+
+.chapter-title {
+    font-size: 2.2rem;
+    font-weight: var(--font-weight-bold);
+    color: var(--color-accent-cyan);
+    text-shadow: var(--glow-cyan);
+    margin: 0;
+}
+
+.narrative-text {
+    font-size: var(--font-size-base);
+    line-height: 1.9;
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-8);
+    text-align: left;
+    padding: var(--space-5);
+    background: var(--color-bg-card);
+    border-radius: var(--layout-border-radius-lg);
+    border: 1px solid rgba(0, 245, 255, 0.1);
+}
+
+
+/* ==========================================================================
+   Story Progress Bar
+   ========================================================================== */
+
+.story-progress {
+    position: fixed;
+    top: var(--layout-nav-height);
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-2) var(--space-6);
+    background: rgba(17, 24, 39, 0.95);
+    border-bottom: 1px solid rgba(0, 245, 255, 0.15);
+    z-index: var(--z-sticky);
+}
+
+.story-progress.hidden {
+    display: none;
+}
+
+.progress-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-accent-cyan);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.chapter-indicator {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+
+.progress-bar {
+    flex: 1;
+    height: 4px;
+    background: rgba(0, 245, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-accent-cyan), var(--color-accent-purple));
+    transition: width 0.5s ease;
+    border-radius: 2px;
+}
+
+
+/* ==========================================================================
+   Ending Overlay Styles
+   ========================================================================== */
+
+.ending-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, var(--color-bg-primary) 0%, var(--color-bg-secondary) 100%);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+}
+
+.ending-overlay.hidden {
+    display: none;
+}
+
+.ending-content {
+    max-width: 600px;
+    padding: var(--space-8);
+    text-align: center;
+}
+
+.ending-badge {
+    display: inline-block;
+    padding: var(--space-2) var(--space-5);
+    background: var(--gradient-pressure);
+    color: white;
+    border-radius: var(--layout-border-radius-full);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: var(--space-5);
+}
+
+.ending-title {
+    font-size: 2.5rem;
+    font-weight: var(--font-weight-bold);
+    color: var(--color-accent-cyan);
+    text-shadow: var(--glow-cyan);
+    margin-bottom: var(--space-3);
+}
+
+.ending-desc {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-6);
+}
+
+.ending-narrative {
+    font-size: var(--font-size-base);
+    line-height: 1.9;
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-8);
+    text-align: left;
+    padding: var(--space-6);
+    background: var(--color-bg-card);
+    border-radius: var(--layout-border-radius-xl);
+    border: 1px solid rgba(0, 245, 255, 0.15);
+}
+
+
+/* ==========================================================================
+   Button Styles (Primary / Secondary)
+   ========================================================================== */
+
+.btn-primary {
+    padding: var(--space-3) var(--space-8);
+    background: var(--color-accent-cyan);
+    color: var(--color-bg-primary);
+    border: none;
+    border-radius: var(--layout-border-radius);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.btn-primary:hover {
+    background: var(--color-accent-purple);
+    box-shadow: var(--glow-purple);
+    transform: translateY(-2px);
+}
+
+.btn-primary:active {
+    transform: translateY(0);
+}
+
+.btn-secondary {
+    padding: var(--space-3) var(--space-6);
+    background: transparent;
+    color: var(--color-text-secondary);
+    border: 1px solid rgba(0, 245, 255, 0.2);
+    border-radius: var(--layout-border-radius);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+}
+
+.btn-secondary:hover {
+    border-color: var(--color-accent-cyan);
+    color: var(--color-accent-cyan);
+    background: rgba(0, 245, 255, 0.05);
+}

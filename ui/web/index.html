@@ -210,6 +210,78 @@
         </main>
 
         <!-- ============================================================
+             Main Menu Overlay
+             ============================================================ -->
+        <div class="main-menu" id="main-menu">
+            <h1 class="menu-title">The Box: Local Verdict</h1>
+            <p class="menu-subtitle">AI 审讯推理游戏</p>
+            
+            <div class="mode-selector" id="mode-selector">
+                <button class="mode-btn" id="btn-story-mode">
+                    <span class="mode-icon">📖</span>
+                    <span class="mode-name">剧情模式</span>
+                    <span class="mode-desc">体验完整故事剧情</span>
+                </button>
+                
+                <button class="mode-btn" id="btn-custom-mode">
+                    <span class="mode-icon">🎲</span>
+                    <span class="mode-name">自定义模式</span>
+                    <span class="mode-desc">自由设定案件背景</span>
+                </button>
+            </div>
+            
+            <div class="story-list" id="story-list" style="display: none;">
+                <h3 class="story-list-title">选择剧情</h3>
+                <div class="story-cards" id="story-cards">
+                    <!-- Dynamic generation -->
+                </div>
+                <button class="btn-secondary" id="btn-back-to-menu">返回</button>
+            </div>
+        </div>
+
+        <!-- ============================================================
+             Narrative Overlay (Chapter Intro/Outro)
+             ============================================================ -->
+        <div class="narrative-overlay" id="narrative-overlay" style="display: none;">
+            <div class="narrative-content">
+                <div class="chapter-header">
+                    <span class="chapter-number" id="chapter-number">第一章</span>
+                    <h2 class="chapter-title" id="chapter-title">初入警局</h2>
+                </div>
+                <div class="narrative-text" id="narrative-text">
+                    <!-- Narrative text -->
+                </div>
+                <button class="btn-primary" id="btn-start-chapter">开始审讯</button>
+            </div>
+        </div>
+
+        <!-- ============================================================
+             Story Progress Bar
+             ============================================================ -->
+        <div class="story-progress" id="story-progress" style="display: none;">
+            <span class="progress-label">剧情模式</span>
+            <span class="chapter-indicator" id="chapter-indicator">第1章 / 共5章</span>
+            <div class="progress-bar">
+                <div class="progress-fill" id="story-progress-fill" style="width: 20%;"></div>
+            </div>
+        </div>
+
+        <!-- ============================================================
+             Ending Overlay
+             ============================================================ -->
+        <div class="ending-overlay" id="ending-overlay" style="display: none;">
+            <div class="ending-content">
+                <div class="ending-badge" id="ending-badge">结局</div>
+                <h2 class="ending-title" id="ending-title">真相大白</h2>
+                <p class="ending-desc" id="ending-desc">你终于找到了父亲...</p>
+                <div class="ending-narrative" id="ending-narrative">
+                    <!-- Ending narrative -->
+                </div>
+                <button class="btn-primary" id="btn-return-main-menu">返回主菜单</button>
+            </div>
+        </div>
+
+        <!-- ============================================================
              Loading Overlay
              ============================================================ -->
         <div class="loading-overlay" id="loading-overlay" role="alert" aria-busy="true" aria-live="assertive">
@@ -255,6 +327,7 @@
 
     <!-- Application JavaScript Modules (order matters: bridge first, app last) -->
     <script src="js/bridge.js"></script>
+    <script src="js/menu.js"></script>
     <script src="js/chat.js"></script>
     <script src="js/suspect.js"></script>
     <script src="js/evidence.js"></script>
