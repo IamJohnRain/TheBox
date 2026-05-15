@@ -143,6 +143,14 @@
             const d = data.data;
             const state = d.state || {};
 
+            // 当 interactive=false 时恢复菜单显示（返回主菜单）
+            if (d.interactive === false) {
+                const menuMgr = window.menuManager;
+                if (menuMgr && typeof menuMgr.show === 'function') {
+                    menuMgr.show();
+                }
+            }
+
             const suspects = state.suspects || [];
             if (suspects.length > 0 && d.interactive !== false) {
                 window._cachedEndingData = null;

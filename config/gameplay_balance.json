@@ -57,6 +57,9 @@
       "固执": {"fear": 35, "defiance": 85, "empathy_susceptibility": 25, "deception_skill": 40, "loyalty": 60}
     }
   },
+  "interrogation": {
+    "time_limit": 600
+  },
   "interaction_limits": {
     "chat_turns_per_suspect": 12,
     "pressure_uses_per_suspect": 2,

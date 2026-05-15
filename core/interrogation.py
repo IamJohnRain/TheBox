@@ -5,6 +5,7 @@ from core.game_config import (
     ACTION_AP_COST,
     CHAT_TURNS_PER_SUSPECT,
     DEFAULT_EVIDENCE_USES,
+    DEFAULT_INTERROGATION_TIME_LIMIT,
     DEFAULT_TOTAL_ACTION_POINTS,
     EMPATHY_USES_PER_SUSPECT,
     EVIDENCE_CHAIN_BONUS,
@@ -81,7 +82,9 @@ class InterrogationEngine:
         ]
         self.current_suspect_index: int = 0
         self.presented_evidence_ids: set = set()
-        self.time_left: int = case_data["interrogation_time_limit_sec"]
+        self.time_left: int = case_data.get(
+            "interrogation_time_limit_sec", DEFAULT_INTERROGATION_TIME_LIMIT
+        )
         self.state: str = "selecting"
 
         # AP系统

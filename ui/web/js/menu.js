@@ -123,6 +123,7 @@ class MenuManager {
                 <span class="story-card-arrow">→</span>
             `;
             card.addEventListener('click', () => {
+                this.hide();
                 if (window.bridge) {
                     window.bridge.startStoryMode(story.story_id);
                 }

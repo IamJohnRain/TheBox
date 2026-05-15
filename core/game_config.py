@@ -131,6 +131,9 @@ def _get_default_config() -> Dict[str, Any]:
                 "固执": {"fear": 35, "defiance": 85, "empathy_susceptibility": 25, "deception_skill": 40, "loyalty": 60},
             },
         },
+        "interrogation": {
+            "time_limit": 600,
+        },
         "interaction_limits": {
             "chat_turns_per_suspect": 12,
             "pressure_uses_per_suspect": 2,
@@ -372,6 +375,9 @@ PROACTIVE_SPEECH_CONFIG: Dict[str, Any] = {}
 EXPERIENCE_CURVE: List[int] = []
 LEVEL_UNLOCKS: Dict[int, Dict[str, Any]] = {}
 
+# Phase 1a config export
+DEFAULT_INTERROGATION_TIME_LIMIT: int = 600
+
 # Phase 4 config exports
 SCORING_CONFIG: Dict[str, Any] = {}
 DIFFICULTY_CONFIG: Dict[str, Any] = {}
@@ -392,6 +398,7 @@ def _init_compatibility_exports():
     global EVIDENCE_CHAIN_BONUS, REBUTTAL_DECAY_CONFIG, PROACTIVE_SPEECH_CONFIG
     global EXPERIENCE_CURVE, LEVEL_UNLOCKS
     global SCORING_CONFIG, DIFFICULTY_CONFIG, EXPERIENCE_CONFIG
+    global DEFAULT_INTERROGATION_TIME_LIMIT
 
     config = get_gameplay_config()
 
@@ -473,6 +480,8 @@ def _init_compatibility_exports():
         "per_presented_evidence": 5,
         "completion": 20,
     })
+
+    DEFAULT_INTERROGATION_TIME_LIMIT = config.get("interrogation", {}).get("time_limit", 600)
 
 
 # Initialize on module load
